@@ -30,6 +30,14 @@ export const validateAzureConnection = async (config: AzureConnectionConfig): Pr
       pat: cleanPat
     });
 
+    // Detect if response is HTML fallback from static host (e.g. Firebase/Vercel static host serving index.html)
+    if (typeof response.data === 'string' && response.data.includes('<!DOCTYPE')) {
+      return {
+        success: false,
+        message: 'Backend proxy is not running on live server (static HTML returned). Please deploy the Express backend proxy (server/index.js) and configure VITE_API_BASE_URL.'
+      };
+    }
+
     if (response.data?.success) {
       isDirectClientMode = false;
       return { success: true };
@@ -83,7 +91,7 @@ export const validateAzureConnection = async (config: AzureConnectionConfig): Pr
     } else if (errObj.response?.status === 403) {
       return { success: false, message: 'Access forbidden. Your PAT lacks required permissions.' };
     }
-    return { success: false, message: 'Failed to connect to Azure DevOps REST API directly from browser.' };
+    return { success: false, message: 'Failed to connect to Azure DevOps. CORS restriction prevents direct browser calls; backend proxy server must be deployed.' };
   }
 };
 
@@ -118,6 +126,11 @@ export const fetchWorkItems = async (config: AzureConnectionConfig): Promise<Wor
         wiqlQuery,
         { headers: getHeaders(config) }
       );
+
+      if (typeof wiqlRes.data === 'string' || !wiqlRes.data?.workItems) {
+        throw new Error('Proxy returned static HTML or invalid response format.');
+      }
+
       workItemRefs = wiqlRes.data.workItems || [];
     } catch {
       isDirectClientMode = true;
@@ -144,25 +157,34 @@ export const fetchWorkItems = async (config: AzureConnectionConfig): Promise<Wor
   const idsParam = ids.join(',');
 
   if (!isDirectClientMode) {
-    const detailsRes = await apiClient.get<{ value: WorkItem[] }>(
-      `/proxy/${encodeURIComponent(organization)}/${encodeURIComponent(project)}/_apis/wit/workitems`,
-      {
-        params: { ids: idsParam, '$expand': 'all', 'api-version': '7.1' },
-        headers: getHeaders(config)
+    try {
+      const detailsRes = await apiClient.get<{ value: WorkItem[] }>(
+        `/proxy/${encodeURIComponent(organization)}/${encodeURIComponent(project)}/_apis/wit/workitems`,
+        {
+          params: { ids: idsParam, '$expand': 'all', 'api-version': '7.1' },
+          headers: getHeaders(config)
+        }
+      );
+
+      if (typeof detailsRes.data === 'string' || !Array.isArray(detailsRes.data?.value)) {
+        throw new Error('Proxy returned static HTML or invalid work items format.');
       }
-    );
-    return detailsRes.data.value || [];
-  } else {
-    const detailsUrl = `https://dev.azure.com/${encodeURIComponent(organization)}/${encodeURIComponent(project)}/_apis/wit/workitems`;
-    const detailsRes = await axios.get<{ value: WorkItem[] }>(detailsUrl, {
-      params: { ids: idsParam, '$expand': 'all', 'api-version': '7.1' },
-      headers: {
-        'Authorization': getDirectAuthHeader(pat),
-        'Accept': 'application/json'
-      }
-    });
-    return detailsRes.data.value || [];
+
+      return detailsRes.data.value || [];
+    } catch {
+      isDirectClientMode = true;
+    }
   }
+
+  const detailsUrl = `https://dev.azure.com/${encodeURIComponent(organization)}/${encodeURIComponent(project)}/_apis/wit/workitems`;
+  const detailsRes = await axios.get<{ value: WorkItem[] }>(detailsUrl, {
+    params: { ids: idsParam, '$expand': 'all', 'api-version': '7.1' },
+    headers: {
+      'Authorization': getDirectAuthHeader(pat),
+      'Accept': 'application/json'
+    }
+  });
+  return detailsRes.data.value || [];
 };
 
 export const fetchWorkItemHistory = async (config: AzureConnectionConfig, workItemId: number): Promise<WorkItemUpdate[]> => {
@@ -182,6 +204,11 @@ export const fetchWorkItemHistory = async (config: AzureConnectionConfig, workIt
           headers: getHeaders(config)
         }
       );
+
+      if (typeof historyRes.data === 'string' || !Array.isArray(historyRes.data?.value)) {
+        throw new Error('Proxy returned static HTML or invalid history format.');
+      }
+
       return historyRes.data.value || [];
     } catch {
       isDirectClientMode = true;
@@ -199,3 +226,4 @@ export const fetchWorkItemHistory = async (config: AzureConnectionConfig, workIt
 
   return historyRes.data.value || [];
 };
+
