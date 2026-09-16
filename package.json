@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "concurrently \"node server/index.js\" \"vite\"",
     "dev:frontend": "vite",
+    "start": "node server/index.js",
     "proxy": "node server/index.js",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
