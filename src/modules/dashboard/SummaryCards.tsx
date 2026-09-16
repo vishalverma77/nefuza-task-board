@@ -43,54 +43,65 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({
     return { total, newTasks, activeTasks, resolvedTasks, closedTasks, blockedTasks };
   }, [workItems]);
 
+  const calcPercent = (count: number) => {
+    if (!metrics.total) return '0%';
+    return `${Math.round((count / metrics.total) * 100)}%`;
+  };
+
   const cardItems = [
     {
       title: 'Total Tasks',
       count: metrics.total,
+      sub: 'All work items',
       filterKey: 'ALL',
-      icon: <AssignmentIcon sx={{ color: '#3b82f6' }} />,
-      bgGradient: 'linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.02) 100%)',
-      borderColor: '#3b82f6'
+      icon: <AssignmentIcon sx={{ color: '#00b4d8' }} />,
+      bgGradient: 'linear-gradient(135deg, rgba(0, 180, 216, 0.12) 0%, rgba(0, 180, 216, 0.02) 100%)',
+      borderColor: '#00b4d8'
     },
     {
       title: 'New / To Do',
       count: metrics.newTasks,
+      sub: calcPercent(metrics.newTasks),
       filterKey: 'New',
-      icon: <FiberNewIcon sx={{ color: '#06b6d4' }} />,
-      bgGradient: 'linear-gradient(135deg, rgba(6, 182, 212, 0.1) 0%, rgba(6, 182, 212, 0.02) 100%)',
-      borderColor: '#06b6d4'
+      icon: <FiberNewIcon sx={{ color: '#38bdf8' }} />,
+      bgGradient: 'linear-gradient(135deg, rgba(56, 189, 248, 0.12) 0%, rgba(56, 189, 248, 0.02) 100%)',
+      borderColor: '#38bdf8'
     },
     {
       title: 'Active',
       count: metrics.activeTasks,
+      sub: calcPercent(metrics.activeTasks),
       filterKey: 'Active',
-      icon: <PlayCircleOutlinedIcon sx={{ color: '#eab308' }} />,
-      bgGradient: 'linear-gradient(135deg, rgba(234, 179, 8, 0.1) 0%, rgba(234, 179, 8, 0.02) 100%)',
-      borderColor: '#eab308'
+      icon: <PlayCircleOutlinedIcon sx={{ color: '#f59e0b' }} />,
+      bgGradient: 'linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(245, 158, 11, 0.02) 100%)',
+      borderColor: '#f59e0b'
     },
     {
       title: 'Resolved',
       count: metrics.resolvedTasks,
+      sub: calcPercent(metrics.resolvedTasks),
       filterKey: 'Resolved',
       icon: <CheckCircleOutlinedIcon sx={{ color: '#8b5cf6' }} />,
-      bgGradient: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(139, 92, 246, 0.02) 100%)',
+      bgGradient: 'linear-gradient(135deg, rgba(139, 92, 246, 0.12) 0%, rgba(139, 92, 246, 0.02) 100%)',
       borderColor: '#8b5cf6'
     },
     {
       title: 'Closed / Done',
       count: metrics.closedTasks,
+      sub: calcPercent(metrics.closedTasks),
       filterKey: 'Closed',
-      icon: <TaskAltIcon sx={{ color: '#22c55e' }} />,
-      bgGradient: 'linear-gradient(135deg, rgba(34, 197, 94, 0.1) 0%, rgba(34, 197, 94, 0.02) 100%)',
-      borderColor: '#22c55e'
+      icon: <TaskAltIcon sx={{ color: '#10b981' }} />,
+      bgGradient: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(16, 185, 129, 0.02) 100%)',
+      borderColor: '#10b981'
     },
     {
       title: 'Blocked',
       count: metrics.blockedTasks,
+      sub: calcPercent(metrics.blockedTasks),
       filterKey: 'Blocked',
-      icon: <BlockIcon sx={{ color: '#ef4444' }} />,
-      bgGradient: 'linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(239, 68, 68, 0.02) 100%)',
-      borderColor: '#ef4444'
+      icon: <BlockIcon sx={{ color: '#f43f5e' }} />,
+      bgGradient: 'linear-gradient(135deg, rgba(244, 63, 94, 0.12) 0%, rgba(244, 63, 94, 0.02) 100%)',
+      borderColor: '#f43f5e'
     }
   ];
 
@@ -104,32 +115,48 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({
               onClick={() => onSelectStateFilter && onSelectStateFilter(item.filterKey)}
               sx={{
                 cursor: 'pointer',
-                transition: 'all 0.2s ease-in-out',
+                transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
                 background: item.bgGradient,
                 borderLeft: `4px solid ${item.borderColor}`,
-                boxShadow: isSelected ? `0 0 0 2px ${item.borderColor}` : undefined,
-                transform: isSelected ? 'translateY(-2px)' : 'none',
+                boxShadow: isSelected
+                  ? `0 0 0 2px ${item.borderColor}, 0 8px 20px rgba(0,0,0,0.12)`
+                  : 'none',
+                transform: isSelected ? 'translateY(-3px)' : 'none',
                 '&:hover': {
-                  transform: 'translateY(-4px)',
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.1)'
+                  transform: 'translateY(-5px)',
+                  boxShadow: `0 12px 28px rgba(0,0,0,0.15), 0 0 15px ${item.borderColor}33`
                 }
               }}
             >
               <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 700, fontSize: '0.82rem' }}>
                     {item.title}
                   </Typography>
-                  <Box sx={{ p: 0.8, borderRadius: 2, bgcolor: 'action.hover', display: 'flex' }}>
+                  <Box
+                    sx={{
+                      p: 0.9,
+                      borderRadius: 2.5,
+                      bgcolor: 'action.hover',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
                     {item.icon}
                   </Box>
                 </Box>
                 {isLoading ? (
                   <Skeleton width={60} height={40} />
                 ) : (
-                  <Typography variant="h4" sx={{ fontWeight: 800, letterSpacing: -1 }}>
-                    {item.count}
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                    <Typography variant="h4" sx={{ fontWeight: 800, letterSpacing: -1 }}>
+                      {item.count}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+                      {item.sub}
+                    </Typography>
+                  </Box>
                 )}
               </CardContent>
             </Card>
@@ -139,3 +166,4 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({
     </Grid>
   );
 };
+

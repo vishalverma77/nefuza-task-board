@@ -90,24 +90,35 @@ export const TaskDetailDrawer: React.FC = () => {
       }}
     >
       {/* Top Header */}
-      <Box sx={{ p: 3, pb: 2, bgcolor: 'background.paper', borderBottom: '1px solid', borderColor: 'divider' }}>
+      <Box
+        sx={{
+          p: 3,
+          pb: 2,
+          bgcolor: 'background.paper',
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+        }}
+      >
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Chip label={`#${selectedWorkItem.id}`} color="primary" size="small" sx={{ fontWeight: 700 }} />
-            <Chip label={type} variant="outlined" size="small" sx={{ fontWeight: 600 }} />
-            <Chip label={state} size="small" color="info" sx={{ fontWeight: 600 }} />
+            <Chip
+              label={`#${selectedWorkItem.id}`}
+              sx={{ fontWeight: 800, bgcolor: '#00b4d8', color: '#fff', borderRadius: 2 }}
+              size="small"
+            />
+            <Chip label={type} variant="outlined" size="small" sx={{ fontWeight: 700, borderRadius: 2 }} />
+            <Chip label={state} size="small" color="info" sx={{ fontWeight: 700, borderRadius: 2 }} />
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Button
               variant="contained"
-              color="primary"
               size="small"
               component="a"
               href={azureDevOpsUrl}
               target="_blank"
               rel="noopener noreferrer"
               startIcon={<LaunchIcon />}
-              sx={{ borderRadius: 2 }}
+              sx={{ borderRadius: 2, fontWeight: 700 }}
             >
               Open in Azure DevOps
             </Button>
@@ -117,12 +128,22 @@ export const TaskDetailDrawer: React.FC = () => {
           </Box>
         </Box>
 
-        <Typography variant="h6" sx={{ fontWeight: 700, mt: 1, lineHeight: 1.3 }}>
+        <Typography variant="h6" sx={{ fontWeight: 800, mt: 1, lineHeight: 1.3 }}>
           {title}
         </Typography>
 
         {/* Tabs navigation */}
-        <Tabs value={activeTab} onChange={(_, val) => setActiveTab(val)} sx={{ mt: 2, minHeight: 40 }}>
+        <Tabs
+          value={activeTab}
+          onChange={(_, val) => setActiveTab(val)}
+          sx={{
+            mt: 2,
+            minHeight: 40,
+            '& .MuiTab-root': { fontWeight: 700, borderRadius: 2, px: 2, minHeight: 38 },
+            '& .Mui-selected': { color: '#00b4d8' },
+            '& .MuiTabs-indicator': { bgcolor: '#00b4d8', height: 3, borderRadius: 3 },
+          }}
+        >
           <Tab icon={<ArticleOutlinedIcon fontSize="small" />} iconPosition="start" label="Overview" />
           <Tab icon={<InfoOutlinedIcon fontSize="small" />} iconPosition="start" label="Details" />
           <Tab icon={<HistoryIcon fontSize="small" />} iconPosition="start" label={`History (${historyUpdates?.length || 0})`} />

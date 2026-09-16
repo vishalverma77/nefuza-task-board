@@ -28,33 +28,42 @@ const ThemeWrapper: React.FC<ThemeWrapperProps> = ({ children }) => {
       palette: {
         mode: themeMode,
         primary: {
-          main: isDark ? '#3b82f6' : '#2563eb',
-          light: '#60a5fa',
-          dark: '#1d4ed8',
+          main: isDark ? '#00c8f5' : '#00b4d8',
+          light: '#38bdf8',
+          dark: '#0284c7',
+          contrastText: '#ffffff',
         },
         secondary: {
           main: '#8b5cf6',
+          light: '#a78bfa',
+          dark: '#6d28d9',
         },
         background: {
-          default: isDark ? '#0f172a' : '#f8fafc',
-          paper: isDark ? '#1e293b' : '#ffffff',
+          default: isDark ? '#070b15' : '#f8fafc',
+          paper: isDark ? '#0f172a' : '#ffffff',
         },
         text: {
-          primary: isDark ? '#f8fafc' : '#0f172a',
+          primary: isDark ? '#f1f5f9' : '#0f172a',
           secondary: isDark ? '#94a3b8' : '#64748b',
         },
-        divider: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
+        divider: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.07)',
       },
       shape: {
-        borderRadius: 12,
+        borderRadius: 14,
       },
       typography: {
-        fontFamily: '"Inter", "Segoe UI", "Roboto", "Helvetica", "Arial", sans-serif',
+        fontFamily: '"Plus Jakarta Sans", "Inter", "Segoe UI", "Roboto", sans-serif',
+        h4: {
+          fontWeight: 800,
+          letterSpacing: '-0.02em',
+        },
         h5: {
           fontWeight: 700,
+          letterSpacing: '-0.01em',
         },
         h6: {
-          fontWeight: 600,
+          fontWeight: 700,
+          letterSpacing: '-0.01em',
         },
         subtitle1: {
           fontWeight: 600,
@@ -62,16 +71,27 @@ const ThemeWrapper: React.FC<ThemeWrapperProps> = ({ children }) => {
         button: {
           textTransform: 'none',
           fontWeight: 600,
+          letterSpacing: '0.01em',
         },
       },
       components: {
         MuiButton: {
           styleOverrides: {
             root: {
-              borderRadius: 8,
+              borderRadius: 10,
               boxShadow: 'none',
+              padding: '8px 20px',
+              transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
               '&:hover': {
-                boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)',
+                boxShadow: isDark
+                  ? '0 6px 20px rgba(0, 200, 245, 0.3)'
+                  : '0 6px 20px rgba(0, 180, 216, 0.25)',
+                transform: 'translateY(-1px)',
+              },
+              '&.MuiButton-containedPrimary': {
+                background: isDark
+                  ? 'linear-gradient(135deg, #00c8f5 0%, #0284c7 100%)'
+                  : 'linear-gradient(135deg, #00b4d8 0%, #0077b6 100%)',
               },
             },
           },
@@ -79,20 +99,35 @@ const ThemeWrapper: React.FC<ThemeWrapperProps> = ({ children }) => {
         MuiCard: {
           styleOverrides: {
             root: {
-              borderRadius: 16,
+              borderRadius: 18,
               backgroundImage: 'none',
+              backdropFilter: 'blur(12px)',
               boxShadow: isDark
-                ? '0 4px 20px rgba(0, 0, 0, 0.4)'
-                : '0 4px 20px rgba(0, 0, 0, 0.05)',
+                ? '0 10px 30px rgba(0, 0, 0, 0.5)'
+                : '0 10px 30px rgba(0, 0, 0, 0.04)',
               border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'}`,
+            },
+          },
+        },
+        MuiOutlinedInput: {
+          styleOverrides: {
+            root: {
+              borderRadius: 10,
+              '&:hover .MuiOutlinedInput-notchedOutline': {
+                borderColor: isDark ? 'rgba(0, 200, 245, 0.5)' : 'rgba(0, 180, 216, 0.5)',
+              },
+              '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+                borderColor: isDark ? '#00c8f5' : '#00b4d8',
+                boxShadow: `0 0 0 3px ${isDark ? 'rgba(0, 200, 245, 0.15)' : 'rgba(0, 180, 216, 0.15)'}`,
+              },
             },
           },
         },
         MuiTableCell: {
           styleOverrides: {
             root: {
-              borderBottom: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'}`,
-              padding: '14px 16px',
+              borderBottom: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)'}`,
+              padding: '14px 18px',
             },
           },
         },

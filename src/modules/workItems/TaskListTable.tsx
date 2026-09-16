@@ -32,6 +32,7 @@ import StarsIcon from '@mui/icons-material/Stars';
 import HelpOutlinedIcon from '@mui/icons-material/HelpOutlined';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import WhatshotIcon from '@mui/icons-material/Whatshot';
 import type { WorkItem, WorkItemType, AzureIdentity } from '../../types/azureDevOps';
 import { selectWorkItem } from '../azureConnection/connectionSlice';
 
@@ -156,30 +157,100 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
   const getWorkItemTypeIcon = (type: WorkItemType | string) => {
     switch (type.toLowerCase()) {
       case 'bug':
-        return <BugReportIcon sx={{ color: '#ef4444', fontSize: 18 }} />;
+        return <BugReportIcon sx={{ color: '#f43f5e', fontSize: 18 }} />;
       case 'task':
-        return <CheckBoxIcon sx={{ color: '#3b82f6', fontSize: 18 }} />;
+        return <CheckBoxIcon sx={{ color: '#00b4d8', fontSize: 18 }} />;
       case 'user story':
-        return <MenuBookIcon sx={{ color: '#06b6d4', fontSize: 18 }} />;
+        return <MenuBookIcon sx={{ color: '#38bdf8', fontSize: 18 }} />;
       case 'feature':
-        return <AutoAwesomeIcon sx={{ color: '#7c3aed', fontSize: 18 }} />;
+        return <AutoAwesomeIcon sx={{ color: '#8b5cf6', fontSize: 18 }} />;
       case 'epic':
         return <StarsIcon sx={{ color: '#f59e0b', fontSize: 18 }} />;
       default:
-        return <HelpOutlinedIcon sx={{ color: '#6b7280', fontSize: 18 }} />;
+        return <HelpOutlinedIcon sx={{ color: '#64748b', fontSize: 18 }} />;
     }
   };
 
   const getStateChip = (state: string) => {
     const s = state.toLowerCase();
-    let color: 'default' | 'primary' | 'secondary' | 'error' | 'info' | 'success' | 'warning' = 'default';
-    if (s === 'new' || s === 'to do') color = 'info';
-    else if (s === 'active' || s === 'in progress') color = 'warning';
-    else if (s === 'resolved') color = 'secondary';
-    else if (s === 'closed' || s === 'done') color = 'success';
-    else if (s === 'blocked') color = 'error';
+    let dotColor = '#94a3b8';
+    let labelColor = 'text.primary';
+    let bgColor = 'rgba(148, 163, 184, 0.12)';
 
-    return <Chip label={state} size="small" color={color} sx={{ fontWeight: 600, borderRadius: 1.5 }} />;
+    if (s === 'new' || s === 'to do') {
+      dotColor = '#38bdf8';
+      bgColor = 'rgba(56, 189, 248, 0.12)';
+    } else if (s === 'active' || s === 'in progress') {
+      dotColor = '#f59e0b';
+      bgColor = 'rgba(245, 158, 11, 0.12)';
+    } else if (s === 'resolved') {
+      dotColor = '#8b5cf6';
+      bgColor = 'rgba(139, 92, 246, 0.12)';
+    } else if (s === 'closed' || s === 'done') {
+      dotColor = '#10b981';
+      bgColor = 'rgba(16, 185, 129, 0.12)';
+    } else if (s === 'blocked') {
+      dotColor = '#f43f5e';
+      bgColor = 'rgba(244, 63, 94, 0.12)';
+    }
+
+    return (
+      <Box
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 1,
+          px: 1.5,
+          py: 0.4,
+          borderRadius: 2,
+          bgcolor: bgColor,
+        }}
+      >
+        <Box
+          sx={{
+            width: 7,
+            height: 7,
+            borderRadius: '50%',
+            bgcolor: dotColor,
+            boxShadow: `0 0 6px ${dotColor}`,
+          }}
+        />
+        <Typography variant="caption" sx={{ fontWeight: 700, color: labelColor }}>
+          {state}
+        </Typography>
+      </Box>
+    );
+  };
+
+  const getPriorityChip = (pVal: string | number) => {
+    const str = String(pVal);
+    if (str === '1') {
+      return (
+        <Chip
+          icon={<WhatshotIcon sx={{ fontSize: '0.9rem !important', color: '#f43f5e !important' }} />}
+          label="P1 High"
+          size="small"
+          sx={{ fontWeight: 800, bgcolor: 'rgba(244, 63, 94, 0.15)', color: '#f43f5e', border: '1px solid rgba(244, 63, 94, 0.3)' }}
+        />
+      );
+    }
+    if (str === '2') {
+      return (
+        <Chip
+          label="P2 Med"
+          size="small"
+          sx={{ fontWeight: 700, bgcolor: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.3)' }}
+        />
+      );
+    }
+    return (
+      <Chip
+        label={`P${str}`}
+        size="small"
+        variant="outlined"
+        sx={{ fontWeight: 600, height: 22 }}
+      />
+    );
   };
 
   const formatDate = (dateStr?: string) => {
@@ -189,24 +260,24 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
   };
 
   return (
-    <Card sx={{ borderRadius: 3, overflow: 'hidden' }}>
+    <Card sx={{ borderRadius: 4, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
       {/* Search & Filter Toolbar */}
       <Box sx={{ p: 2.5, bgcolor: 'background.paper', borderBottom: '1px solid', borderColor: 'divider' }}>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', justifyContent: 'space-between' }}>
           <TextField
-            placeholder="Search by ID or Title..."
+            placeholder="Search by Work Item ID or Title..."
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setPage(0);
             }}
             size="small"
-            sx={{ minWidth: 260, flexGrow: 1 }}
+            sx={{ minWidth: 280, flexGrow: 1 }}
             slotProps={{
               input: {
                 startAdornment: (
                   <InputAdornment position="start">
-                    <SearchIcon color="action" />
+                    <SearchIcon sx={{ color: '#00b4d8' }} />
                   </InputAdornment>
                 ),
               }
@@ -226,7 +297,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 if (onSelectStateFilter) onSelectStateFilter(e.target.value);
                 setPage(0);
               }}
-              sx={{ minWidth: 120 }}
+              sx={{ minWidth: 130 }}
             >
               <MenuItem value="ALL">All States</MenuItem>
               <MenuItem value="New">New / To Do</MenuItem>
@@ -302,23 +373,23 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
         <Table sx={{ minWidth: 900 }}>
           <TableHead sx={{ bgcolor: 'action.hover' }}>
             <TableRow>
-              <TableCell sx={{ fontWeight: 700, width: 80 }} onClick={() => handleSort('id')} style={{ cursor: 'pointer' }}>
+              <TableCell sx={{ fontWeight: 800, width: 90 }} onClick={() => handleSort('id')} style={{ cursor: 'pointer' }}>
                 ID {sortBy === 'id' && (sortOrder === 'asc' ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)}
               </TableCell>
-              <TableCell sx={{ fontWeight: 700 }} onClick={() => handleSort('title')} style={{ cursor: 'pointer' }}>
+              <TableCell sx={{ fontWeight: 800 }} onClick={() => handleSort('title')} style={{ cursor: 'pointer' }}>
                 Title {sortBy === 'title' && (sortOrder === 'asc' ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)}
               </TableCell>
-              <TableCell sx={{ fontWeight: 700, width: 130 }}>Type</TableCell>
-              <TableCell sx={{ fontWeight: 700, width: 120 }}>State</TableCell>
-              <TableCell sx={{ fontWeight: 700, width: 180 }}>Assigned To</TableCell>
-              <TableCell sx={{ fontWeight: 700, width: 90 }} onClick={() => handleSort('priority')} style={{ cursor: 'pointer' }}>
+              <TableCell sx={{ fontWeight: 800, width: 130 }}>Type</TableCell>
+              <TableCell sx={{ fontWeight: 800, width: 140 }}>State</TableCell>
+              <TableCell sx={{ fontWeight: 800, width: 180 }}>Assigned To</TableCell>
+              <TableCell sx={{ fontWeight: 800, width: 110 }} onClick={() => handleSort('priority')} style={{ cursor: 'pointer' }}>
                 Priority {sortBy === 'priority' && (sortOrder === 'asc' ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)}
               </TableCell>
-              <TableCell sx={{ fontWeight: 700, width: 130 }} onClick={() => handleSort('changedDate')} style={{ cursor: 'pointer' }}>
+              <TableCell sx={{ fontWeight: 800, width: 130 }} onClick={() => handleSort('changedDate')} style={{ cursor: 'pointer' }}>
                 Updated {sortBy === 'changedDate' && (sortOrder === 'asc' ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)}
               </TableCell>
-              <TableCell sx={{ fontWeight: 700, width: 140 }}>Sprint</TableCell>
-              <TableCell align="center" sx={{ fontWeight: 700, width: 80 }}>Action</TableCell>
+              <TableCell sx={{ fontWeight: 800, width: 130 }}>Sprint</TableCell>
+              <TableCell align="center" sx={{ fontWeight: 800, width: 80 }}>View</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -340,11 +411,11 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
               <TableRow>
                 <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
                   <Paper variant="outlined" sx={{ p: 4, display: 'inline-block', borderStyle: 'dashed', borderRadius: 3 }}>
-                    <Typography variant="subtitle1" color="text.secondary" sx={{ fontWeight: 600 }}>
+                    <Typography variant="subtitle1" color="text.secondary" sx={{ fontWeight: 700 }}>
                       No work items found
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                      Try adjusting your search terms or active filters.
+                      Try clearing your search query or modifying state filters.
                     </Typography>
                   </Paper>
                 </TableCell>
@@ -372,19 +443,26 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                     key={item.id}
                     hover
                     onClick={() => dispatch(selectWorkItem(item))}
-                    sx={{ cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
+                    sx={{
+                      cursor: 'pointer',
+                      transition: 'background-color 0.2s ease',
+                      '&:hover': {
+                        bgcolor: (theme) =>
+                          theme.palette.mode === 'dark' ? 'rgba(0, 180, 216, 0.06)' : 'rgba(0, 180, 216, 0.04)',
+                      }
+                    }}
                   >
-                    <TableCell sx={{ fontWeight: 700, color: 'primary.main' }}>
+                    <TableCell sx={{ fontWeight: 800, color: '#00b4d8' }}>
                       #{item.id}
                     </TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary' }}>
                         {fields['System.Title']}
                       </Typography>
                       {fields['System.Tags'] && (
-                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
+                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.6 }}>
                           {fields['System.Tags'].split(';').map((tag) => (
-                            <Chip key={tag} label={tag.trim()} size="small" variant="outlined" sx={{ fontSize: '0.7rem', height: 20 }} />
+                            <Chip key={tag} label={tag.trim()} size="small" variant="outlined" sx={{ fontSize: '0.68rem', height: 18, borderRadius: 1 }} />
                           ))}
                         </Box>
                       )}
@@ -392,23 +470,21 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         {getWorkItemTypeIcon(type)}
-                        <Typography variant="body2">{type}</Typography>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>{type}</Typography>
                       </Box>
                     </TableCell>
                     <TableCell>{getStateChip(state)}</TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Avatar src={avatarUrl} sx={{ width: 26, height: 26, fontSize: '0.8rem', bgcolor: 'primary.main' }}>
+                        <Avatar src={avatarUrl} sx={{ width: 26, height: 26, fontSize: '0.8rem', bgcolor: '#00b4d8', fontWeight: 700 }}>
                           {assignedName.charAt(0)}
                         </Avatar>
-                        <Typography variant="body2" noWrap sx={{ maxWidth: 120 }}>
+                        <Typography variant="body2" noWrap sx={{ maxWidth: 120, fontWeight: 500 }}>
                           {assignedName}
                         </Typography>
                       </Box>
                     </TableCell>
-                    <TableCell>
-                      <Chip label={`P${priority}`} size="small" variant="outlined" sx={{ fontWeight: 700, height: 22 }} />
-                    </TableCell>
+                    <TableCell>{getPriorityChip(priority)}</TableCell>
                     <TableCell sx={{ color: 'text.secondary', fontSize: '0.85rem' }}>
                       {formatDate(fields['System.ChangedDate'])}
                     </TableCell>
@@ -423,6 +499,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                             e.stopPropagation();
                             dispatch(selectWorkItem(item));
                           }}
+                          sx={{ color: '#00b4d8' }}
                         >
                           <VisibilityIcon fontSize="small" />
                         </IconButton>
@@ -452,3 +529,4 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
     </Card>
   );
 };
+
