@@ -156,6 +156,78 @@ azureProxyApp.post('/validate', async (req: Request, res: Response) => {
   }
 });
 
+// Sync tasks directly to user's Google Sheet via Apps Script Webhook
+azureProxyApp.post('/sync-google-sheet', async (req: Request, res: Response) => {
+  let { webhookUrl, payload } = req.body;
+
+  if (!webhookUrl || !payload) {
+    return res.status(400).json({
+      success: false,
+      message: 'Webhook URL and task payload are required.'
+    });
+  }
+
+  // Ensure webhookUrl ends with /exec
+  webhookUrl = String(webhookUrl).trim();
+  if (!webhookUrl.endsWith('/exec') && !webhookUrl.includes('/exec?')) {
+    webhookUrl = webhookUrl.replace(/\/+$/, '') + '/exec';
+  }
+
+  try {
+    console.log(`[Google Sheet Sync] Calling Webhook URL: ${webhookUrl} for tab "${payload.sheetName}"`);
+    const response = await axios.post(webhookUrl, payload, {
+      headers: { 'Content-Type': 'application/json' },
+      maxRedirects: 10,
+      timeout: 45000,
+      validateStatus: (status) => status < 500
+    });
+
+    console.log('[Google Sheet Sync] Webhook responded status:', response.status);
+
+    let result = response.data;
+    if (typeof result === 'string') {
+      try {
+        result = JSON.parse(result);
+      } catch {
+        // If Google returned HTML (Login page or authorization screen)
+        if (result.includes('accounts.google.com') || result.includes('<!DOCTYPE') || result.includes('<html')) {
+          return res.status(403).json({
+            success: false,
+            message: 'Google Apps Script Access Denied: In Apps Script, click Deploy > Manage deployments > Edit > set "Who has access" to "Anyone", then re-deploy.'
+          });
+        }
+        return res.status(500).json({
+          success: false,
+          message: `Unexpected response from Google Apps Script: ${result.slice(0, 200)}`
+        });
+      }
+    }
+
+    if (result && typeof result === 'object') {
+      if (result.success === false) {
+        return res.status(400).json({
+          success: false,
+          message: result.message || result.error || 'Apps Script returned an error.'
+        });
+      }
+      return res.json(result);
+    }
+
+    return res.json({
+      success: true,
+      message: `Tab "${payload.sheetName}" synced to Google Sheet successfully!`
+    });
+  } catch (error: unknown) {
+    const errObj = error as { message?: string; response?: { status?: number; data?: unknown } };
+    console.error('[Google Sheet Sync Error]:', errObj.message);
+    const status = errObj.response?.status || 500;
+    return res.status(status).json({
+      success: false,
+      message: errObj.message || 'Failed to communicate with Google Sheet Webhook'
+    });
+  }
+});
+
 // Proxy endpoint middleware for Azure DevOps REST APIs
 azureProxyApp.use('/proxy', async (req: Request, res: Response) => {
   const { org, pat } = getAzureCredentials(req);

@@ -3,7 +3,7 @@ import { defineConfig } from 'vite'
 // @ts-ignore
 import { azureProxyApp } from './server/app.ts'
 
-// https://vite.dev/config/
+// https://vite.dev/config/ - updated
 export default defineConfig({
   plugins: [
     react(),

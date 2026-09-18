@@ -19,7 +19,12 @@ import {
   Tooltip,
   Skeleton,
   InputAdornment,
-  Paper
+  Paper,
+  Button,
+  Collapse,
+  Snackbar,
+  Alert,
+  AlertTitle
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
@@ -33,8 +38,13 @@ import HelpOutlinedIcon from '@mui/icons-material/HelpOutlined';
 import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import WhatshotIcon from '@mui/icons-material/Whatshot';
+import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import DateRangeIcon from '@mui/icons-material/DateRange';
+import ClearIcon from '@mui/icons-material/Clear';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import type { WorkItem, WorkItemType, AzureIdentity } from '../../types/azureDevOps';
 import { selectWorkItem } from '../azureConnection/connectionSlice';
+import { ExportTasksDialog, type ExportSuccessNotification } from './ExportTasksDialog';
 
 interface TaskListTableProps {
   workItems: WorkItem[];
@@ -56,6 +66,16 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [priorityFilter, setPriorityFilter] = useState('ALL');
   const [assignedFilter, setAssignedFilter] = useState('ALL');
+
+  // Date Range Filter State
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [dateFilterType, setDateFilterType] = useState<'changedDate' | 'createdDate'>('changedDate');
+  const [isDateFilterOpen, setIsDateFilterOpen] = useState(false);
+
+  // Export Dialog State
+  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [successNotification, setSuccessNotification] = useState<ExportSuccessNotification | null>(null);
   
   // Sorting State
   const [sortBy, setSortBy] = useState<'changedDate' | 'id' | 'title' | 'priority'>('changedDate');
@@ -64,6 +84,36 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
   // Pagination State
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+
+  // Date Presets Handler
+  const handleApplyDatePreset = (preset: 'all' | 'today' | '7days' | '30days' | 'thisMonth') => {
+    const now = new Date();
+    const toYMD = (d: Date) => d.toISOString().split('T')[0];
+
+    if (preset === 'all') {
+      setStartDate('');
+      setEndDate('');
+    } else if (preset === 'today') {
+      const today = toYMD(now);
+      setStartDate(today);
+      setEndDate(today);
+    } else if (preset === '7days') {
+      const d = new Date();
+      d.setDate(d.getDate() - 7);
+      setStartDate(toYMD(d));
+      setEndDate(toYMD(now));
+    } else if (preset === '30days') {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      setStartDate(toYMD(d));
+      setEndDate(toYMD(now));
+    } else if (preset === 'thisMonth') {
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      setStartDate(toYMD(firstDay));
+      setEndDate(toYMD(now));
+    }
+    setPage(0);
+  };
 
   // Extract unique assigned users for filter dropdown
   const assignedUsers = useMemo(() => {
@@ -121,7 +171,27 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
       // Assigned match
       const matchesAssigned = assignedFilter === 'ALL' || assignedName === assignedFilter;
 
-      return matchesSearch && matchesState && matchesType && matchesPriority && matchesAssigned;
+      // Date range match
+      let matchesDate = true;
+      const targetDateStr =
+        dateFilterType === 'changedDate' ? fields['System.ChangedDate'] : fields['System.CreatedDate'];
+      if (targetDateStr && (startDate || endDate)) {
+        const itemDate = new Date(targetDateStr);
+        if (!isNaN(itemDate.getTime())) {
+          if (startDate) {
+            const start = new Date(startDate);
+            start.setHours(0, 0, 0, 0);
+            if (itemDate < start) matchesDate = false;
+          }
+          if (endDate && matchesDate) {
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            if (itemDate > end) matchesDate = false;
+          }
+        }
+      }
+
+      return matchesSearch && matchesState && matchesType && matchesPriority && matchesAssigned && matchesDate;
     }).sort((a, b) => {
       let comparison = 0;
       if (sortBy === 'changedDate') {
@@ -139,7 +209,19 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
       }
       return sortOrder === 'asc' ? comparison : -comparison;
     });
-  }, [workItems, searchQuery, selectedStateFilter, typeFilter, priorityFilter, assignedFilter, sortBy, sortOrder]);
+  }, [
+    workItems,
+    searchQuery,
+    selectedStateFilter,
+    typeFilter,
+    priorityFilter,
+    assignedFilter,
+    startDate,
+    endDate,
+    dateFilterType,
+    sortBy,
+    sortOrder
+  ]);
 
   const paginatedItems = useMemo(() => {
     return filteredWorkItems.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
@@ -259,6 +341,8 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
+  const hasActiveDateFilter = !!startDate || !!endDate;
+
   return (
     <Card sx={{ borderRadius: 4, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
       {/* Search & Filter Toolbar */}
@@ -272,7 +356,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
               setPage(0);
             }}
             size="small"
-            sx={{ minWidth: 280, flexGrow: 1 }}
+            sx={{ minWidth: 260, flexGrow: 1 }}
             slotProps={{
               input: {
                 startAdornment: (
@@ -297,7 +381,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 if (onSelectStateFilter) onSelectStateFilter(e.target.value);
                 setPage(0);
               }}
-              sx={{ minWidth: 130 }}
+              sx={{ minWidth: 120 }}
             >
               <MenuItem value="ALL">All States</MenuItem>
               <MenuItem value="New">New / To Do</MenuItem>
@@ -317,7 +401,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 setTypeFilter(e.target.value);
                 setPage(0);
               }}
-              sx={{ minWidth: 130 }}
+              sx={{ minWidth: 120 }}
             >
               <MenuItem value="ALL">All Types</MenuItem>
               <MenuItem value="Task">Task</MenuItem>
@@ -336,7 +420,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 setPriorityFilter(e.target.value);
                 setPage(0);
               }}
-              sx={{ minWidth: 110 }}
+              sx={{ minWidth: 100 }}
             >
               <MenuItem value="ALL">All</MenuItem>
               <MenuItem value="1">P1 - High</MenuItem>
@@ -355,7 +439,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 setAssignedFilter(e.target.value);
                 setPage(0);
               }}
-              sx={{ minWidth: 150 }}
+              sx={{ minWidth: 140 }}
             >
               <MenuItem value="ALL">All Users</MenuItem>
               {assignedUsers.map((user) => (
@@ -364,8 +448,194 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 </MenuItem>
               ))}
             </TextField>
+
+            {/* Date Range Toggle Button */}
+            <Tooltip title="Filter by date range">
+              <Button
+                variant={hasActiveDateFilter ? 'contained' : 'outlined'}
+                color={hasActiveDateFilter ? 'info' : 'inherit'}
+                size="medium"
+                onClick={() => setIsDateFilterOpen(!isDateFilterOpen)}
+                startIcon={<DateRangeIcon />}
+                sx={{
+                  height: 40,
+                  textTransform: 'none',
+                  fontWeight: 700,
+                  borderRadius: 2,
+                  px: 1.8,
+                  borderColor: hasActiveDateFilter ? undefined : 'divider',
+                  bgcolor: hasActiveDateFilter ? 'rgba(0, 180, 216, 0.15)' : undefined,
+                  color: hasActiveDateFilter ? '#00b4d8' : 'text.primary',
+                  '&:hover': {
+                    borderColor: '#00b4d8',
+                    bgcolor: hasActiveDateFilter ? 'rgba(0, 180, 216, 0.25)' : 'action.hover'
+                  }
+                }}
+              >
+                Date Range
+                {hasActiveDateFilter && (
+                  <Box
+                    component="span"
+                    sx={{
+                      ml: 1,
+                      width: 7,
+                      height: 7,
+                      borderRadius: '50%',
+                      bgcolor: '#00b4d8',
+                      display: 'inline-block'
+                    }}
+                  />
+                )}
+              </Button>
+            </Tooltip>
+
+            {/* Export to Excel Button */}
+            <Button
+              variant="contained"
+              size="medium"
+              startIcon={<FileDownloadIcon />}
+              onClick={() => setIsExportDialogOpen(true)}
+              sx={{
+                bgcolor: '#00b4d8',
+                '&:hover': { bgcolor: '#0096c7' },
+                fontWeight: 800,
+                textTransform: 'none',
+                height: 40,
+                px: 2.2,
+                borderRadius: 2,
+                boxShadow: '0 4px 14px rgba(0, 180, 216, 0.25)'
+              }}
+            >
+              Export to Excel
+            </Button>
           </Box>
         </Box>
+
+        {/* Expandable Date Range Filter Bar */}
+        <Collapse in={isDateFilterOpen || hasActiveDateFilter}>
+          <Box
+            sx={{
+              mt: 2,
+              pt: 2,
+              borderTop: '1px dashed',
+              borderColor: 'divider',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 1.5,
+              alignItems: 'center',
+              justifyContent: 'space-between'
+            }}
+          >
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
+              <Typography variant="caption" sx={{ fontWeight: 800, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                Filter By Date:
+              </Typography>
+
+              {/* Date target selector */}
+              <TextField
+                select
+                size="small"
+                value={dateFilterType}
+                onChange={(e) => {
+                  setDateFilterType(e.target.value as 'changedDate' | 'createdDate');
+                  setPage(0);
+                }}
+                sx={{ minWidth: 150 }}
+              >
+                <MenuItem value="changedDate">Updated Date</MenuItem>
+                <MenuItem value="createdDate">Created Date</MenuItem>
+              </TextField>
+
+              {/* Start Date */}
+              <TextField
+                label="From Date"
+                type="date"
+                size="small"
+                value={startDate}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setPage(0);
+                }}
+                slotProps={{ inputLabel: { shrink: true } }}
+                sx={{ width: 155 }}
+              />
+
+              {/* End Date */}
+              <TextField
+                label="To Date"
+                type="date"
+                size="small"
+                value={endDate}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setPage(0);
+                }}
+                slotProps={{ inputLabel: { shrink: true } }}
+                sx={{ width: 155 }}
+              />
+
+              {/* Clear button */}
+              {hasActiveDateFilter && (
+                <Tooltip title="Clear Date Filter">
+                  <IconButton
+                    size="small"
+                    onClick={() => {
+                      setStartDate('');
+                      setEndDate('');
+                      setPage(0);
+                    }}
+                    sx={{ color: '#f43f5e' }}
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              )}
+            </Box>
+
+            {/* Quick Presets */}
+            <Box sx={{ display: 'flex', gap: 0.8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                Presets:
+              </Typography>
+              <Chip
+                label="All Time"
+                size="small"
+                onClick={() => handleApplyDatePreset('all')}
+                variant={!hasActiveDateFilter ? 'filled' : 'outlined'}
+                color={!hasActiveDateFilter ? 'primary' : 'default'}
+                sx={{ cursor: 'pointer', height: 24, fontSize: '0.75rem' }}
+              />
+              <Chip
+                label="Today"
+                size="small"
+                onClick={() => handleApplyDatePreset('today')}
+                variant="outlined"
+                sx={{ cursor: 'pointer', height: 24, fontSize: '0.75rem' }}
+              />
+              <Chip
+                label="Last 7 Days"
+                size="small"
+                onClick={() => handleApplyDatePreset('7days')}
+                variant="outlined"
+                sx={{ cursor: 'pointer', height: 24, fontSize: '0.75rem' }}
+              />
+              <Chip
+                label="Last 30 Days"
+                size="small"
+                onClick={() => handleApplyDatePreset('30days')}
+                variant="outlined"
+                sx={{ cursor: 'pointer', height: 24, fontSize: '0.75rem' }}
+              />
+              <Chip
+                label="This Month"
+                size="small"
+                onClick={() => handleApplyDatePreset('thisMonth')}
+                variant="outlined"
+                sx={{ cursor: 'pointer', height: 24, fontSize: '0.75rem' }}
+              />
+            </Box>
+          </Box>
+        </Collapse>
       </Box>
 
       {/* Table Content */}
@@ -415,8 +685,20 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                       No work items found
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                      Try clearing your search query or modifying state filters.
+                      Try clearing your search query or modifying date/state filters.
                     </Typography>
+                    {hasActiveDateFilter && (
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          setStartDate('');
+                          setEndDate('');
+                        }}
+                        sx={{ mt: 1.5 }}
+                      >
+                        Clear Date Range
+                      </Button>
+                    )}
                   </Paper>
                 </TableCell>
               </TableRow>
@@ -526,7 +808,81 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
           setPage(0);
         }}
       />
+
+      {/* Export to Excel / CSV Dialog */}
+      <ExportTasksDialog
+        open={isExportDialogOpen}
+        onClose={() => setIsExportDialogOpen(false)}
+        workItems={filteredWorkItems}
+        initialStartDate={startDate}
+        initialEndDate={endDate}
+        initialDateType={dateFilterType}
+        onSuccess={(notification) => setSuccessNotification(notification)}
+      />
+
+      {/* Export & Google Sheet Sync Success Confirmation Notification */}
+      <Snackbar
+        open={Boolean(successNotification)}
+        autoHideDuration={9000}
+        onClose={() => setSuccessNotification(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+        sx={{ mt: 8 }}
+      >
+        <Alert
+          onClose={() => setSuccessNotification(null)}
+          severity="success"
+          variant="filled"
+          sx={{
+            minWidth: 380,
+            maxWidth: 640,
+            bgcolor: '#356854', // Forest Green theme
+            color: '#FFFFFF',
+            boxShadow: '0 8px 32px rgba(53, 104, 84, 0.45)',
+            borderRadius: 2.5,
+            alignItems: 'center',
+            border: '1px solid rgba(255, 255, 255, 0.3)',
+            '& .MuiAlert-icon': {
+              color: '#FFFFFF',
+              fontSize: 26,
+            },
+          }}
+          action={
+            successNotification?.actionUrl ? (
+              <Button
+                color="inherit"
+                size="small"
+                href={successNotification.actionUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                endIcon={<OpenInNewIcon fontSize="inherit" />}
+                sx={{
+                  ml: 1.5,
+                  fontWeight: 800,
+                  textTransform: 'none',
+                  bgcolor: 'rgba(255, 255, 255, 0.2)',
+                  border: '1px solid rgba(255, 255, 255, 0.4)',
+                  color: '#FFFFFF',
+                  px: 1.8,
+                  py: 0.5,
+                  borderRadius: 1.5,
+                  '&:hover': {
+                    bgcolor: 'rgba(255, 255, 255, 0.35)',
+                  },
+                }}
+              >
+                {successNotification.actionLabel || 'Open Google Sheet'}
+              </Button>
+            ) : undefined
+          }
+        >
+          <AlertTitle sx={{ fontWeight: 800, fontSize: '0.98rem', mb: 0.3, color: '#FFFFFF' }}>
+            {successNotification?.title}
+          </AlertTitle>
+          <Typography variant="body2" sx={{ color: 'rgba(255, 255, 255, 0.95)', fontSize: '0.86rem' }}>
+            {successNotification?.message}
+          </Typography>
+        </Alert>
+      </Snackbar>
     </Card>
   );
 };
-
