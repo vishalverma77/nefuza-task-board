@@ -2,9 +2,10 @@ import React from 'react';
 import DOMPurify from 'dompurify';
 import { Box, Typography } from '@mui/material';
 import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
+import { normalizeDescription } from '../../services/uncurlApi';
 
 interface SafeHtmlViewerProps {
-  htmlContent?: string;
+  htmlContent?: unknown;
   emptyMessage?: string;
 }
 
@@ -12,14 +13,16 @@ export const SafeHtmlViewer: React.FC<SafeHtmlViewerProps> = ({
   htmlContent,
   emptyMessage = 'No description available for this work item.'
 }) => {
-  if (!htmlContent || htmlContent.trim() === '' || htmlContent === '<p><br></p>') {
+  const normalized = normalizeDescription(htmlContent);
+
+  if (!normalized || normalized.trim() === '' || normalized === '<p><br></p>') {
     return (
       <Box
         sx={{
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          justify: 'center',
+          justifyContent: 'center',
           p: 4,
           bgcolor: 'action.hover',
           borderRadius: 2,
@@ -36,7 +39,7 @@ export const SafeHtmlViewer: React.FC<SafeHtmlViewerProps> = ({
   }
 
   // Sanitize HTML safely preserving standard formatting tags & links
-  const sanitizedHtml = DOMPurify.sanitize(htmlContent, {
+  const sanitizedHtml = DOMPurify.sanitize(normalized, {
     ADD_ATTR: ['target', 'rel'],
   });
 

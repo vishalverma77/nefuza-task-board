@@ -394,17 +394,19 @@ export const ConnectionForm: React.FC = () => {
               />
             </Divider>
 
-            <Button
-              variant="outlined"
-              color="secondary"
-              fullWidth
-              size="small"
-              onClick={handleDemoMode}
-              startIcon={<RocketLaunchIcon sx={{ fontSize: 18 }} />}
-              sx={{ py: 1, borderRadius: 2, fontWeight: 650, fontSize: '0.85rem' }}
-            >
-              Explore Demo Sandbox (Sample Data)
-            </Button>
+            <Stack spacing={1.2}>
+              <Button
+                variant="outlined"
+                color="secondary"
+                fullWidth
+                size="small"
+                onClick={handleDemoMode}
+                startIcon={<RocketLaunchIcon sx={{ fontSize: 18 }} />}
+                sx={{ py: 1, borderRadius: 2, fontWeight: 650, fontSize: '0.85rem' }}
+              >
+                Explore Demo Sandbox (Sample Data)
+              </Button>
+            </Stack>
 
             <Box
               sx={{

@@ -9,7 +9,8 @@ import {
   Box,
   Chip,
   Tooltip,
-  useTheme
+  useTheme,
+  Divider
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -27,57 +28,102 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ onRefresh, isRefreshing }) => {
   const dispatch = useDispatch();
   const theme = useTheme();
-  const { config, themeMode } = useSelector((state: RootState) => state.connection);
+  const { config, activeOrg, themeMode } = useSelector((state: RootState) => state.connection);
 
   return (
     <AppBar
       position="sticky"
-      elevation={0}
-      sx={{
-        bgcolor: theme.palette.mode === 'dark' ? 'rgba(7, 11, 21, 0.85)' : 'rgba(255, 255, 255, 0.88)',
-        backdropFilter: 'blur(16px)',
-        borderBottom: '1px solid',
-        borderColor: theme.palette.mode === 'dark' ? 'rgba(0, 180, 216, 0.2)' : 'rgba(0, 180, 216, 0.12)',
-        color: 'text.primary',
-        transition: 'all 0.3s ease',
-      }}
-    >
-      <Toolbar sx={{ justifyContent: 'space-between', px: { xs: 2, sm: 3 }, minHeight: '56px !important' }}>
-        {/* Brand & Connection Info */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              px: 1,
-              py: 0.5,
-              borderRadius: 2,
-              bgcolor: 'rgba(0, 180, 216, 0.08)',
-              border: '1px solid rgba(0, 180, 216, 0.2)',
-              boxShadow: '0 0 12px rgba(0, 180, 216, 0.12)',
-            }}
-          >
-            <img
-              src="/logo.png"
-              alt="SG Logo"
-              style={{ height: 24, width: 'auto', display: 'block' }}
-            />
-          </Box>
-          <Box>
-            <Typography sx={{ fontWeight: 650, fontSize: '0.92rem', lineHeight: 1.2, letterSpacing: '-0.01em', color: 'text.primary' }}>
-              SG Task Board
-            </Typography>
-            {config && (
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500, fontSize: '0.7rem', display: 'block', mt: 0.1 }}>
-                {config.organization} <span style={{ color: '#00b4d8', opacity: 0.7 }}>/</span> {config.project}
+        elevation={0}
+        sx={{
+          bgcolor: theme.palette.mode === 'dark' ? 'rgba(7, 11, 21, 0.85)' : 'rgba(255, 255, 255, 0.88)',
+          backdropFilter: 'blur(16px)',
+          borderBottom: '1px solid',
+          borderColor: theme.palette.mode === 'dark' ? 'rgba(0, 180, 216, 0.2)' : 'rgba(0, 180, 216, 0.12)',
+          color: 'text.primary',
+          transition: 'all 0.3s ease',
+        }}
+      >
+        <Toolbar sx={{ justifyContent: 'space-between', px: { xs: 1.25, sm: 2.5, md: 3 }, minHeight: '56px !important' }}>
+          {/* Brand & Organization Switcher */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1, sm: 1.5 }, minWidth: 0 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                px: 1,
+                py: 0.5,
+                borderRadius: 2,
+                bgcolor: 'rgba(0, 180, 216, 0.08)',
+                border: '1px solid rgba(0, 180, 216, 0.2)',
+                boxShadow: '0 0 12px rgba(0, 180, 216, 0.12)',
+                flexShrink: 0,
+              }}
+            >
+              <img
+                src="/logo.png"
+                alt="SG Logo"
+                style={{ height: 22, width: 'auto', display: 'block' }}
+              />
+            </Box>
+
+            <Box sx={{ display: { xs: 'none', md: 'block' } }}>
+              <Typography sx={{ fontWeight: 700, fontSize: '0.92rem', lineHeight: 1.2, letterSpacing: '-0.01em', color: 'text.primary', whiteSpace: 'nowrap' }}>
+                SG Task Board
               </Typography>
-            )}
+            </Box>
+
+            <Divider orientation="vertical" flexItem sx={{ height: 20, my: 'auto', mx: 0.25, display: { xs: 'none', sm: 'block' } }} />
+
+            {/* Clean Static Project Badge (No switcher dropdown, hidden from external view) */}
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.8,
+                px: { xs: 1, sm: 1.5 },
+                py: 0.4,
+                borderRadius: 2,
+                border: '1px solid',
+                borderColor:
+                  activeOrg === 'uncurl:health'
+                    ? 'rgba(53, 104, 84, 0.35)'
+                    : 'rgba(0, 180, 216, 0.3)',
+                bgcolor:
+                  activeOrg === 'uncurl:health'
+                    ? 'rgba(53, 104, 84, 0.08)'
+                    : 'rgba(0, 180, 216, 0.08)',
+                maxWidth: { xs: 140, sm: 220 },
+              }}
+            >
+              <Box
+                sx={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  bgcolor: activeOrg === 'uncurl:health' ? '#356854' : '#00b4d8',
+                  flexShrink: 0,
+                }}
+              />
+              <Typography
+                variant="caption"
+                sx={{
+                  fontWeight: 700,
+                  fontSize: { xs: '0.75rem', sm: '0.8rem' },
+                  color: 'text.primary',
+                  lineHeight: 1,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }}
+              >
+                {activeOrg === 'uncurl:health' ? 'Tasquee Board' : (config?.project || 'Nefuza Sprint')}
+              </Typography>
+            </Box>
           </Box>
-        </Box>
 
         {/* Right Action Controls */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.75, sm: 1 }, flexShrink: 0 }}>
           {config?.isDemoMode ? (
             <Chip
               icon={<RocketLaunchIcon sx={{ fontSize: '0.85rem !important' }} />}
@@ -156,6 +202,7 @@ export const Header: React.FC<HeaderProps> = ({ onRefresh, isRefreshing }) => {
             </IconButton>
           </Tooltip>
 
+          {/* Desktop Disconnect Button */}
           <Button
             variant="outlined"
             color="error"
@@ -168,10 +215,28 @@ export const Header: React.FC<HeaderProps> = ({ onRefresh, isRefreshing }) => {
               fontSize: '0.75rem',
               height: 30,
               px: 1.5,
+              display: { xs: 'none', sm: 'inline-flex' },
             }}
           >
             Disconnect
           </Button>
+
+          {/* Mobile Disconnect Icon */}
+          <Tooltip title="Disconnect">
+            <IconButton
+              color="error"
+              size="small"
+              onClick={() => dispatch(disconnect())}
+              sx={{
+                display: { xs: 'inline-flex', sm: 'none' },
+                bgcolor: 'rgba(239, 68, 68, 0.08)',
+                borderRadius: 2,
+                p: 0.7,
+              }}
+            >
+              <LogoutIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
         </Box>
       </Toolbar>
     </AppBar>

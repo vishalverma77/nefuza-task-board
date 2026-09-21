@@ -1,4 +1,7 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useSelector } from 'react-redux';
+import { useSnackbar } from 'notistack';
+import type { RootState } from '../../app/store';
 import {
   Dialog,
   DialogTitle,
@@ -53,7 +56,8 @@ import {
 } from '../../utils/exportToExcel';
 import {
   syncTasksToGoogleSheet,
-  GOOGLE_APPS_SCRIPT_CODE
+  getOrgGoogleSheetDetails,
+  getGoogleAppsScriptCode
 } from '../../utils/googleSheetsSync';
 
 export interface ExportSuccessNotification {
@@ -82,6 +86,8 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
   initialDateType = 'changedDate',
   onSuccess
 }) => {
+  const { enqueueSnackbar } = useSnackbar();
+
   // Tab state: 0 = Excel Download, 1 = Add Tab to Google Sheet, 2 = Table Preview
   const [activeTab, setActiveTab] = useState<number>(0);
 
@@ -95,10 +101,19 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
   const [userFileName, setUserFileName] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
-  // Google Sheets Cloud Sync state
+  // Organization context & Sheet details
+  const activeOrg = useSelector((state: RootState) => state.connection.activeOrg);
+  const orgSheet = useMemo(() => getOrgGoogleSheetDetails(activeOrg), [activeOrg]);
+
+  // Google Sheets Cloud Sync state (separated per organization)
   const [webhookUrl, setWebhookUrl] = useState(() => {
-    return localStorage.getItem('nefuza_google_sheet_webhook') || '';
+    return localStorage.getItem(orgSheet.storageKey) || '';
   });
+
+  // Re-sync webhook URL if active organization changes
+  useEffect(() => {
+    setWebhookUrl(localStorage.getItem(orgSheet.storageKey) || '');
+  }, [orgSheet.storageKey]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<{
     type: 'success' | 'error';
@@ -183,6 +198,14 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
     });
   }, [workItems, dateField, startDate, endDate]);
 
+  // Calculate sum of known spent hours across filtered tasks
+  const totalKnownSpentHours = useMemo(() => {
+    return filteredTasksForExport.reduce((acc, item) => {
+      const v = item.fields['Custom.SpentHours'] ?? item.fields['Microsoft.VSTS.Scheduling.CompletedWork'];
+      return acc + (typeof v === 'number' ? v : Number(v) || 0);
+    }, 0);
+  }, [filteredTasksForExport]);
+
   const handleToggleColumn = (key: keyof ExportColumnOptions) => {
     if (key === 'spentHours') return; // Cannot uncheck compulsory column
     setColumns((prev) => ({
@@ -222,6 +245,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
         sheetName: finalExportName,
         format: fileFormat
       });
+      enqueueSnackbar(`Successfully downloaded "${finalExportName}.${fileFormat}" (${filteredTasksForExport.length} tasks)!`, { variant: 'success' });
       onClose();
       onSuccess?.({
         title: 'Excel Export Completed!',
@@ -229,6 +253,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
       });
     } catch (err) {
       console.error('Failed to export tasks:', err);
+      enqueueSnackbar('Failed to export tasks: ' + ((err as Error)?.message || 'Unknown error'), { variant: 'error' });
     } finally {
       setIsExporting(false);
     }
@@ -236,6 +261,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
 
   const handleSyncToGoogleSheet = async () => {
     if (!webhookUrl.trim()) {
+      enqueueSnackbar('Please enter your Google Apps Script Webhook URL below.', { variant: 'warning' });
       setSyncStatus({
         type: 'error',
         message: 'Please enter your Google Apps Script Webhook URL below.'
@@ -245,7 +271,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
 
     setIsSyncing(true);
     setSyncStatus(null);
-    localStorage.setItem('nefuza_google_sheet_webhook', webhookUrl.trim());
+    localStorage.setItem(orgSheet.storageKey, webhookUrl.trim());
 
     try {
       const finalSheetName = effectiveFileName.trim() || autoTimesheetName;
@@ -256,18 +282,21 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
         columns: {
           ...columns,
           spentHours: true
-        }
+        },
+        spreadsheetId: orgSheet.spreadsheetId
       });
 
       if (res.success) {
+        enqueueSnackbar(`"${finalSheetName}" tab added to Google Sheet successfully!`, { variant: 'success' });
         onClose(); // Automatically closes modal on success
         onSuccess?.({
-          title: 'Google Sheet Synced Successfully!',
-          message: `New sheet tab "${finalSheetName}" with ${filteredTasksForExport.length} tasks has been successfully added into your Google Sheet!`,
-          actionUrl: 'https://docs.google.com/spreadsheets/d/17ZajNMt4Ri4crPXJzhQMmrdJ3NpNxFEdxKttFI1KGRY/edit?gid=1400103783#gid=1400103783',
-          actionLabel: 'Open Google Sheet'
+          title: `${orgSheet.orgLabel} Sheet Synced Successfully!`,
+          message: `New sheet tab "${finalSheetName}" with ${filteredTasksForExport.length} tasks has been successfully added into your ${orgSheet.orgLabel} Google Sheet!`,
+          actionUrl: orgSheet.sheetUrl,
+          actionLabel: `Open ${orgSheet.orgLabel} Sheet`
         });
       } else {
+        enqueueSnackbar(res.message || 'Failed to add tab to Google Sheet.', { variant: 'error' });
         setSyncStatus({
           type: 'error',
           message: res.message || 'Failed to add tab to Google Sheet.'
@@ -275,9 +304,11 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
       }
     } catch (err: unknown) {
       const errObj = err as { message?: string };
+      const msg = errObj.message || 'Error communicating with Google Sheet Webhook.';
+      enqueueSnackbar(msg, { variant: 'error' });
       setSyncStatus({
         type: 'error',
-        message: errObj.message || 'Error communicating with Google Sheet Webhook.'
+        message: msg
       });
     } finally {
       setIsSyncing(false);
@@ -285,8 +316,10 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
   };
 
   const handleCopyScript = () => {
-    navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
+    const script = getGoogleAppsScriptCode(orgSheet.spreadsheetId, orgSheet.orgLabel);
+    navigator.clipboard.writeText(script);
     setCopiedScript(true);
+    enqueueSnackbar('Google Apps Script code copied to clipboard!', { variant: 'info' });
     setTimeout(() => setCopiedScript(false), 2500);
   };
 
@@ -304,9 +337,13 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
       slotProps={{
         paper: {
           sx: {
-            borderRadius: 3.5,
+            borderRadius: { xs: 2, sm: 3.5 },
             backgroundImage: 'none',
             boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4)',
+            display: 'flex',
+            flexDirection: 'column',
+            maxHeight: { xs: 'calc(100% - 16px)', sm: 'calc(100% - 48px)' },
+            m: { xs: 1, sm: 2 },
             overflow: 'hidden'
           }
         }
@@ -318,58 +355,83 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          px: 3,
-          py: 2,
+          px: { xs: 1.5, sm: 3 },
+          py: { xs: 1.5, sm: 2 },
           borderBottom: '1px solid',
           borderColor: 'divider',
-          bgcolor: 'action.hover'
+          bgcolor: 'action.hover',
+          flexShrink: 0
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.2, minWidth: 0, pr: 1 }}>
           <Box
             sx={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              width: 44,
-              height: 44,
-              borderRadius: 2.5,
+              width: { xs: 36, sm: 44 },
+              height: { xs: 36, sm: 44 },
+              borderRadius: 2,
               bgcolor: 'rgba(0, 180, 216, 0.15)',
-              color: '#00b4d8'
+              color: '#00b4d8',
+              flexShrink: 0
             }}
           >
-            <TableChartIcon fontSize="medium" />
+            <TableChartIcon sx={{ fontSize: { xs: 20, sm: 24 } }} />
           </Box>
-          <Box>
-            <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.2 }}>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="h6" sx={{ fontWeight: 800, lineHeight: 1.2, fontSize: { xs: '0.95rem', sm: '1.25rem' } }} noWrap>
               Timesheet & Task Export
             </Typography>
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'none', sm: 'block' } }}>
               Export to Excel File or <strong>Add New Month Tab directly into your Google Sheet</strong>
             </Typography>
           </Box>
         </Box>
-        <IconButton size="small" onClick={onClose} sx={{ color: 'text.secondary' }}>
+        <IconButton size="small" onClick={onClose} sx={{ color: 'text.secondary', flexShrink: 0 }}>
           <CloseIcon fontSize="small" />
         </IconButton>
       </DialogTitle>
 
       {/* Tabs Navigation */}
-      <Box sx={{ px: 3, pt: 1, bgcolor: 'background.paper', borderBottom: '1px solid', borderColor: 'divider' }}>
-        <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} textColor="primary" indicatorColor="primary">
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', px: { xs: 1, sm: 3 }, bgcolor: 'background.paper', flexShrink: 0 }}>
+        <Tabs
+          value={activeTab}
+          onChange={(_, val) => setActiveTab(val)}
+          textColor="inherit"
+          indicatorColor="primary"
+          variant="scrollable"
+          scrollButtons="auto"
+          allowScrollButtonsMobile
+          sx={{
+            minHeight: { xs: 40, sm: 48 },
+            '& .MuiTabs-indicator': { bgcolor: '#00b4d8', height: 3 }
+          }}
+        >
           <Tab
             icon={<FileDownloadIcon fontSize="small" />}
             iconPosition="start"
-            label="Download Excel (.xlsx)"
-            sx={{ fontWeight: 700, textTransform: 'none' }}
+            label="Download Excel"
+            sx={{
+              fontWeight: 800,
+              textTransform: 'none',
+              fontSize: { xs: '0.75rem', sm: '0.875rem' },
+              minHeight: { xs: 40, sm: 48 },
+              px: { xs: 1.2, sm: 2 },
+              color: '#00b4d8',
+              '&.Mui-selected': { color: '#00b4d8' }
+            }}
           />
           <Tab
             icon={<CloudSyncIcon fontSize="small" />}
             iconPosition="start"
-            label="Add Tab to Google Sheet"
+            label="Google Sheet"
             sx={{
               fontWeight: 800,
               textTransform: 'none',
+              fontSize: { xs: '0.75rem', sm: '0.875rem' },
+              minHeight: { xs: 40, sm: 48 },
+              px: { xs: 1.2, sm: 2 },
               color: '#00b4d8',
               '&.Mui-selected': { color: '#00b4d8' }
             }}
@@ -377,53 +439,59 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
           <Tab
             icon={<CalculateIcon fontSize="small" />}
             iconPosition="start"
-            label={`Table Preview (${filteredTasksForExport.length} Tasks)`}
-            sx={{ fontWeight: 700, textTransform: 'none' }}
+            label={`Preview (${filteredTasksForExport.length})`}
+            sx={{
+              fontWeight: 700,
+              textTransform: 'none',
+              fontSize: { xs: '0.75rem', sm: '0.875rem' },
+              minHeight: { xs: 40, sm: 48 },
+              px: { xs: 1.2, sm: 2 }
+            }}
           />
         </Tabs>
       </Box>
 
-      <DialogContent sx={{ p: 3, maxHeight: '72vh' }}>
+      <DialogContent sx={{ p: { xs: 1.5, sm: 3 }, flex: 1, overflowY: 'auto' }}>
         {/* Live Match Counter Banner */}
         <Box
           sx={{
             display: 'flex',
-            alignItems: 'center',
+            flexDirection: { xs: 'column', sm: 'row' },
+            alignItems: { xs: 'flex-start', sm: 'center' },
             justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 1.5,
-            p: 1.8,
-            mb: 2.5,
+            gap: 1.2,
+            p: { xs: 1.2, sm: 1.8 },
+            mb: 2,
             borderRadius: 2.5,
             bgcolor: 'rgba(0, 180, 216, 0.08)',
             border: '1px solid rgba(0, 180, 216, 0.25)'
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <CheckCircleIcon sx={{ color: '#00b4d8', fontSize: 22 }} />
-            <Typography variant="body2" sx={{ fontWeight: 700 }}>
-              <Box component="span" sx={{ color: '#00b4d8', fontSize: '1.1rem', fontWeight: 800 }}>
+            <CheckCircleIcon sx={{ color: '#00b4d8', fontSize: 20 }} />
+            <Typography variant="body2" sx={{ fontWeight: 700, fontSize: { xs: '0.8rem', sm: '0.875rem' } }}>
+              <Box component="span" sx={{ color: '#00b4d8', fontSize: { xs: '0.95rem', sm: '1.1rem' }, fontWeight: 800 }}>
                 {filteredTasksForExport.length}
               </Box>{' '}
-              work items ready for <strong>{effectiveFileName}</strong>
+              items ready for <strong>{effectiveFileName}</strong>
             </Typography>
           </Box>
 
-          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Box sx={{ display: 'flex', gap: 0.8, alignItems: 'center', flexWrap: 'wrap' }}>
             <Chip
-              icon={<CalculateIcon sx={{ fontSize: '1rem !important' }} />}
-              label="Auto-SUM Formula (=SUM)"
+              icon={<CalculateIcon sx={{ fontSize: '0.85rem !important' }} />}
+              label="Auto-SUM (=SUM)"
               size="small"
               color="success"
               variant="outlined"
-              sx={{ fontWeight: 700 }}
+              sx={{ fontWeight: 700, fontSize: '0.7rem' }}
             />
             <Chip
-              icon={<EditNoteIcon sx={{ fontSize: '1rem !important' }} />}
-              label="Spent Hours Compulsory"
+              icon={<EditNoteIcon sx={{ fontSize: '0.85rem !important' }} />}
+              label="Spent Hours"
               size="small"
               color="info"
-              sx={{ fontWeight: 700 }}
+              sx={{ fontWeight: 700, fontSize: '0.7rem' }}
             />
           </Box>
         </Box>
@@ -697,7 +765,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                     <Button
                       color="inherit"
                       size="small"
-                      href="https://docs.google.com/spreadsheets/d/17ZajNMt4Ri4crPXJzhQMmrdJ3NpNxFEdxKttFI1KGRY/edit?gid=1400103783#gid=1400103783"
+                      href={orgSheet.sheetUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       endIcon={<OpenInNewIcon fontSize="inherit" />}
@@ -725,7 +793,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
                 <Box>
                   <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 700, textTransform: 'uppercase' }}>
-                    New Tab to be added in your Google Sheet:
+                    New Tab for {orgSheet.orgLabel} in Google Sheet:
                   </Typography>
                   <Typography variant="h6" sx={{ fontWeight: 800, color: '#356854', mt: 0.2 }}>
                     📄 {effectiveFileName}
@@ -735,13 +803,13 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                 <Button
                   size="small"
                   variant="outlined"
-                  href="https://docs.google.com/spreadsheets/d/17ZajNMt4Ri4crPXJzhQMmrdJ3NpNxFEdxKttFI1KGRY/edit?gid=1400103783#gid=1400103783"
+                  href={orgSheet.sheetUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   endIcon={<OpenInNewIcon fontSize="small" />}
                   sx={{ textTransform: 'none', fontWeight: 700 }}
                 >
-                  Open Google Sheet
+                  Open {orgSheet.orgLabel} Sheet
                 </Button>
               </Box>
             </Paper>
@@ -749,7 +817,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
             {/* Webhook URL Input */}
             <Box sx={{ mb: 3 }}>
               <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
-                Google Apps Script Webhook URL
+                {orgSheet.orgLabel} Apps Script Webhook URL
               </Typography>
               <TextField
                 fullWidth
@@ -758,9 +826,9 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                 value={webhookUrl}
                 onChange={(e) => {
                   setWebhookUrl(e.target.value);
-                  localStorage.setItem('nefuza_google_sheet_webhook', e.target.value.trim());
+                  localStorage.setItem(orgSheet.storageKey, e.target.value.trim());
                 }}
-                helperText="Paste your deployed Google Apps Script Web App URL. It will be remembered in your browser."
+                helperText={`Paste your deployed Google Apps Script Web App URL for ${orgSheet.orgLabel}. It is saved automatically in your browser.`}
               />
             </Box>
 
@@ -768,7 +836,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
             <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 2.5, bgcolor: 'background.paper' }}>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5, flexWrap: 'wrap', gap: 1 }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
-                  ⚡ 1-Minute Setup Guide (Do this once):
+                  ⚡ 1-Minute Setup Guide for {orgSheet.orgLabel}:
                 </Typography>
                 <Button
                   size="small"
@@ -785,9 +853,9 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
               <Typography variant="body2" component="div" sx={{ color: 'text.secondary', lineHeight: 1.7 }}>
                 <ol style={{ paddingLeft: '1.2rem', margin: 0 }}>
                   <li>
-                    Open your existing{' '}
+                    Open your {orgSheet.orgLabel}{' '}
                     <a
-                      href="https://docs.google.com/spreadsheets/d/17ZajNMt4Ri4crPXJzhQMmrdJ3NpNxFEdxKttFI1KGRY/edit?gid=1400103783#gid=1400103783"
+                      href={orgSheet.sheetUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{ color: '#00b4d8', fontWeight: 700 }}
@@ -926,25 +994,39 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                               {taskDesc}
                             </TableCell>
                           )}
-                          {/* Spent Hours blank cell for manual input */}
-                          <TableCell
-                            sx={{
-                              ...cellStyle,
-                              bgcolor: 'rgba(254, 240, 138, 0.35)',
-                              textAlign: 'right',
-                              '&:hover': { bgcolor: 'rgba(254, 240, 138, 0.6)' }
-                            }}
-                            title="Blank cell for your manual hours entry in Excel / Google Sheet"
-                            onClick={() => setSelectedCellDetail({
-                              title: 'Spent Hours (Manual Entry)',
-                              value: 'This cell is left blank in the exported sheet so you can enter spent hours manually. The Total row below will auto-sum your entries.',
-                              taskId
-                            })}
-                          >
-                            <Typography variant="caption" sx={{ color: '#854d0e', fontStyle: 'italic', fontWeight: 600 }}>
-                              [ Manual Entry ]
-                            </Typography>
-                          </TableCell>
+                          {/* Spent Hours cell (auto-filled if tracked, or manual entry) */}
+                          {(() => {
+                            const spentVal = fields['Custom.SpentHours'] ?? fields['Microsoft.VSTS.Scheduling.CompletedWork'];
+                            const hasHours = spentVal !== undefined && spentVal !== null && spentVal !== '' && Number(spentVal) > 0;
+                            return (
+                              <TableCell
+                                sx={{
+                                  ...cellStyle,
+                                  bgcolor: 'rgba(254, 240, 138, 0.4)',
+                                  textAlign: 'right',
+                                  '&:hover': { bgcolor: 'rgba(254, 240, 138, 0.7)' }
+                                }}
+                                title={hasHours ? `Auto-filled: ${Number(spentVal).toFixed(2)} hours` : 'Blank cell for manual entry'}
+                                onClick={() => setSelectedCellDetail({
+                                  title: hasHours ? 'Spent Hours (Auto-calculated)' : 'Spent Hours (Manual Entry)',
+                                  value: hasHours
+                                    ? `This card has ${Number(spentVal).toFixed(2)} hours logged. It will be prefilled automatically in your sheet.`
+                                    : 'This cell is left blank in the exported sheet so you can enter spent hours manually. The Total row below will auto-sum your entries.',
+                                  taskId
+                                })}
+                              >
+                                {hasHours ? (
+                                  <Typography variant="body2" sx={{ color: '#854d0e', fontWeight: 800, fontSize: '0.85rem' }}>
+                                    {Number(spentVal).toFixed(2)}
+                                  </Typography>
+                                ) : (
+                                  <Typography variant="caption" sx={{ color: '#854d0e', fontStyle: 'italic', fontWeight: 600 }}>
+                                    [ Manual Entry ]
+                                  </Typography>
+                                )}
+                              </TableCell>
+                            );
+                          })()}
                           {columns.updatedDate && (
                             <TableCell
                               sx={{ ...cellStyle, fontSize: '0.8rem', color: 'text.secondary' }}
@@ -1017,7 +1099,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                       <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.6, bgcolor: '#285040', px: 1.2, py: 0.4, borderRadius: 1, border: '1px solid rgba(255, 255, 255, 0.4)' }}>
                         <CalculateIcon sx={{ fontSize: 14, color: '#FFFFFF' }} />
                         <Typography variant="caption" sx={{ fontWeight: 800, color: '#FFFFFF' }}>
-                          =SUM(Spent Hours)
+                          {totalKnownSpentHours > 0 ? `=SUM (${totalKnownSpentHours.toFixed(2)} hrs)` : '=SUM(Spent Hours)'}
                         </Typography>
                       </Box>
                     </TableCell>
@@ -1056,21 +1138,53 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
       {/* Dialog Footer Actions */}
       <DialogActions
         sx={{
-          px: 3,
-          py: 2,
+          px: { xs: 1.5, sm: 3 },
+          py: { xs: 1.25, sm: 2 },
           borderTop: '1px solid',
           borderColor: 'divider',
           bgcolor: 'action.hover',
-          justifyContent: 'space-between'
+          display: 'flex',
+          flexDirection: { xs: 'column', sm: 'row' },
+          alignItems: { xs: 'stretch', sm: 'center' },
+          justifyContent: 'space-between',
+          flexShrink: 0,
+          gap: 1
         }}
       >
-        <Button onClick={onClose} color="inherit" disabled={isExporting || isSyncing}>
-          Close
-        </Button>
-
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            gap: 1.2,
+            alignItems: 'stretch',
+            width: { xs: '100%', sm: 'auto' },
+            order: { xs: 1, sm: 2 }
+          }}
+        >
           {activeTab !== 1 ? (
             <>
+              <Button
+                variant="contained"
+                onClick={handleExport}
+                disabled={filteredTasksForExport.length === 0 || isExporting}
+                startIcon={isExporting ? <CircularProgress size={16} color="inherit" /> : <FileDownloadIcon />}
+                sx={{
+                  bgcolor: '#00b4d8',
+                  '&:hover': { bgcolor: '#0096c7' },
+                  fontWeight: 800,
+                  fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                  py: { xs: 0.9, sm: 1 },
+                  px: 2.5,
+                  borderRadius: 2,
+                  boxShadow: '0 4px 14px rgba(0, 180, 216, 0.3)',
+                  width: { xs: '100%', sm: 'auto' }
+                }}
+              >
+                {isExporting
+                  ? 'Generating Spreadsheet...'
+                  : `Download Excel (${filteredTasksForExport.length} Tasks)`}
+              </Button>
+
               <Button
                 variant="outlined"
                 onClick={() => setActiveTab(1)}
@@ -1078,31 +1192,14 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                 sx={{
                   textTransform: 'none',
                   fontWeight: 800,
+                  fontSize: { xs: '0.8rem', sm: '0.875rem' },
                   borderColor: '#00b4d8',
-                  color: '#00b4d8'
+                  color: '#00b4d8',
+                  py: { xs: 0.8, sm: 1 },
+                  width: { xs: '100%', sm: 'auto' }
                 }}
               >
                 Add Tab to Google Sheet
-              </Button>
-
-              <Button
-                variant="contained"
-                onClick={handleExport}
-                disabled={filteredTasksForExport.length === 0 || isExporting}
-                startIcon={isExporting ? <CircularProgress size={18} color="inherit" /> : <FileDownloadIcon />}
-                sx={{
-                  bgcolor: '#00b4d8',
-                  '&:hover': { bgcolor: '#0096c7' },
-                  fontWeight: 800,
-                  px: 3,
-                  py: 1,
-                  borderRadius: 2,
-                  boxShadow: '0 4px 14px rgba(0, 180, 216, 0.3)'
-                }}
-              >
-                {isExporting
-                  ? 'Generating Spreadsheet...'
-                  : `Download Excel (${filteredTasksForExport.length} Tasks)`}
               </Button>
             </>
           ) : (
@@ -1110,15 +1207,17 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
               variant="contained"
               onClick={handleSyncToGoogleSheet}
               disabled={filteredTasksForExport.length === 0 || isSyncing}
-              startIcon={isSyncing ? <CircularProgress size={18} color="inherit" /> : <CloudSyncIcon />}
+              startIcon={isSyncing ? <CircularProgress size={16} color="inherit" /> : <CloudSyncIcon />}
               sx={{
                 bgcolor: '#00b4d8',
                 '&:hover': { bgcolor: '#0096c7' },
                 fontWeight: 800,
-                px: 3.5,
-                py: 1.1,
+                fontSize: { xs: '0.8rem', sm: '0.875rem' },
+                py: { xs: 0.9, sm: 1.1 },
+                px: 3,
                 borderRadius: 2,
-                boxShadow: '0 4px 14px rgba(0, 180, 216, 0.3)'
+                boxShadow: '0 4px 14px rgba(0, 180, 216, 0.3)',
+                width: { xs: '100%', sm: 'auto' }
               }}
             >
               {isSyncing
@@ -1127,6 +1226,20 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
             </Button>
           )}
         </Box>
+
+        <Button
+          onClick={onClose}
+          color="inherit"
+          disabled={isExporting || isSyncing}
+          sx={{
+            width: { xs: '100%', sm: 'auto' },
+            order: { xs: 2, sm: 1 },
+            py: { xs: 0.6, sm: 1 },
+            fontSize: { xs: '0.8rem', sm: '0.875rem' }
+          }}
+        >
+          Close
+        </Button>
       </DialogActions>
 
       {/* Interactive Cell Detail Dialog (Shows full details on cell click) */}
@@ -1136,7 +1249,18 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
           onClose={() => setSelectedCellDetail(null)}
           maxWidth="sm"
           fullWidth
-          slotProps={{ paper: { sx: { borderRadius: 2.5, overflow: 'hidden' } } }}
+          slotProps={{
+            paper: {
+              sx: {
+                borderRadius: { xs: 2, sm: 2.5 },
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                maxHeight: { xs: 'calc(100% - 32px)', sm: 'calc(100% - 64px)' },
+                m: { xs: 1, sm: 2 }
+              }
+            }
+          }}
         >
           <DialogTitle
             sx={{
@@ -1144,9 +1268,10 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
               alignItems: 'center',
               justifyContent: 'space-between',
               py: 1.5,
-              px: 2.5,
+              px: { xs: 2, sm: 2.5 },
               bgcolor: '#356854',
-              color: '#FFFFFF'
+              color: '#FFFFFF',
+              flexShrink: 0
             }}
           >
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1165,7 +1290,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
               <CloseIcon fontSize="small" />
             </IconButton>
           </DialogTitle>
-          <DialogContent sx={{ p: 3 }}>
+          <DialogContent sx={{ p: { xs: 2, sm: 3 }, flex: 1, overflowY: 'auto' }}>
             <Typography
               variant="body2"
               sx={{
@@ -1180,12 +1305,13 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
               {selectedCellDetail.value || '(Empty)'}
             </Typography>
           </DialogContent>
-          <DialogActions sx={{ px: 2.5, py: 1.5, borderTop: '1px solid', borderColor: 'divider', bgcolor: 'action.hover' }}>
+          <DialogActions sx={{ px: { xs: 2, sm: 2.5 }, py: 1.5, borderTop: '1px solid', borderColor: 'divider', bgcolor: 'action.hover', flexShrink: 0 }}>
             <Button
               size="small"
               startIcon={<ContentCopyIcon />}
               onClick={() => {
                 navigator.clipboard.writeText(selectedCellDetail.value);
+                enqueueSnackbar('Copied to clipboard!', { variant: 'info' });
               }}
               sx={{ textTransform: 'none', fontWeight: 700 }}
             >

@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Provider, useSelector } from 'react-redux';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createTheme, ThemeProvider, CssBaseline } from '@mui/material';
+import { SnackbarProvider } from 'notistack';
 import { store } from '../store';
 import type { RootState } from '../store';
 
@@ -138,7 +139,18 @@ const ThemeWrapper: React.FC<ThemeWrapperProps> = ({ children }) => {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      {children}
+      <SnackbarProvider
+        maxSnack={4}
+        autoHideDuration={3500}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        style={{
+          fontFamily: '"Plus Jakarta Sans", "Inter", sans-serif',
+          fontWeight: 600,
+          borderRadius: 12,
+        }}
+      >
+        {children}
+      </SnackbarProvider>
     </ThemeProvider>
   );
 };

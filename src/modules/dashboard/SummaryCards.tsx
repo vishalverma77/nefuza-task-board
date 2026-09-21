@@ -106,11 +106,11 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({
   ];
 
   return (
-    <Grid container spacing={2.5} sx={{ mb: 4 }}>
+    <Grid container spacing={{ xs: 1.25, sm: 2, md: 2.5 }} sx={{ mb: { xs: 2.5, sm: 4 } }}>
       {cardItems.map((item) => {
         const isSelected = selectedStateFilter === item.filterKey;
         return (
-          <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }} key={item.title}>
+          <Grid size={{ xs: 6, sm: 4, md: 4, lg: 2 }} key={item.title}>
             <Card
               onClick={() => onSelectStateFilter && onSelectStateFilter(item.filterKey)}
               sx={{
@@ -123,37 +123,60 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({
                   : 'none',
                 transform: isSelected ? 'translateY(-3px)' : 'none',
                 '&:hover': {
-                  transform: 'translateY(-5px)',
+                  transform: 'translateY(-4px)',
                   boxShadow: `0 12px 28px rgba(0,0,0,0.15), 0 0 15px ${item.borderColor}33`
                 }
               }}
             >
-              <CardContent sx={{ p: 2.5, '&:last-child': { pb: 2.5 } }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 700, fontSize: '0.82rem' }}>
+              <CardContent sx={{ p: { xs: 1.5, sm: 2, md: 2.25 }, '&:last-child': { pb: { xs: 1.5, sm: 2, md: 2.25 } } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: { xs: 1, sm: 1.5 } }}>
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{
+                      fontWeight: 700,
+                      fontSize: { xs: '0.72rem', sm: '0.8rem' },
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}
+                  >
                     {item.title}
                   </Typography>
                   <Box
                     sx={{
-                      p: 0.9,
-                      borderRadius: 2.5,
+                      p: { xs: 0.5, sm: 0.8 },
+                      borderRadius: 2,
                       bgcolor: 'action.hover',
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'center'
+                      justifyContent: 'center',
+                      '& svg': { fontSize: { xs: '1rem', sm: '1.25rem' } }
                     }}
                   >
                     {item.icon}
                   </Box>
                 </Box>
                 {isLoading ? (
-                  <Skeleton width={60} height={40} />
+                  <Skeleton width={50} height={32} />
                 ) : (
                   <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-                    <Typography variant="h4" sx={{ fontWeight: 800, letterSpacing: -1 }}>
+                    <Typography
+                      variant="h4"
+                      sx={{
+                        fontWeight: 800,
+                        letterSpacing: -1,
+                        fontSize: { xs: '1.35rem', sm: '1.75rem', md: '2.1rem' },
+                        lineHeight: 1
+                      }}
+                    >
                       {item.count}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ fontWeight: 700, fontSize: { xs: '0.68rem', sm: '0.75rem' } }}
+                    >
                       {item.sub}
                     </Typography>
                   </Box>

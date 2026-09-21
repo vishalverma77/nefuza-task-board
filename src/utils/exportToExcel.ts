@@ -4,10 +4,10 @@ import type { WorkItem, AzureIdentity } from '../types/azureDevOps';
 /**
  * Strips HTML tags and decodes common HTML entities into clean plain text.
  */
-export const stripHtmlToPlainText = (html?: string): string => {
+export const stripHtmlToPlainText = (html?: unknown): string => {
   if (!html) return '';
 
-  let text = html;
+  let text = typeof html === 'string' ? html : String(html);
 
   // Replace block endings with newlines
   text = text.replace(/<br\s*\/?>/gi, '\n');
@@ -94,45 +94,46 @@ export const DEFAULT_EXPORT_COLUMNS: ExportColumnOptions = {
   tags: false,
 };
 /**
- * Generates timesheet name based on date range (e.g. "September-nefuza-timesheet")
+ * Generates timesheet name based on date range with short month and year (e.g. "Sep-2026")
  */
 export const getTimesheetNameFromDates = (startDate?: string, endDate?: string): string => {
-  const monthNames = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
+  const shortMonths = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
   ];
-
-  let monthPrefix = '';
 
   if (startDate) {
     const sDate = new Date(startDate);
     if (!isNaN(sDate.getTime())) {
-      const sMonth = monthNames[sDate.getMonth()];
+      const sMonth = shortMonths[sDate.getMonth()];
+      const sYear = sDate.getFullYear();
+
       if (endDate) {
         const eDate = new Date(endDate);
         if (!isNaN(eDate.getTime())) {
-          const eMonth = monthNames[eDate.getMonth()];
-          monthPrefix = sMonth === eMonth ? sMonth : `${sMonth}-${eMonth}`;
-        } else {
-          monthPrefix = sMonth;
+          const eMonth = shortMonths[eDate.getMonth()];
+          const eYear = eDate.getFullYear();
+
+          if (sMonth === eMonth && sYear === eYear) {
+            return `${sMonth}-${sYear}`;
+          } else if (sYear === eYear) {
+            return `${sMonth}-${eMonth}-${sYear}`;
+          } else {
+            return `${sMonth}-${sYear}-${eMonth}-${eYear}`;
+          }
         }
-      } else {
-        monthPrefix = sMonth;
       }
+      return `${sMonth}-${sYear}`;
     }
   } else if (endDate) {
     const eDate = new Date(endDate);
     if (!isNaN(eDate.getTime())) {
-      monthPrefix = monthNames[eDate.getMonth()];
+      return `${shortMonths[eDate.getMonth()]}-${eDate.getFullYear()}`;
     }
   }
 
-  if (!monthPrefix) {
-    const now = new Date();
-    monthPrefix = monthNames[now.getMonth()];
-  }
-
-  return monthPrefix;
+  const now = new Date();
+  return `${shortMonths[now.getMonth()]}-${now.getFullYear()}`;
 };
 
 interface ExportParams {
@@ -293,11 +294,17 @@ export const exportTasksToFile = async ({
     const priorityVal = fields['System.Priority'] || fields['Microsoft.VSTS.Common.Priority'];
     const priority = priorityVal !== undefined && priorityVal !== null ? `P${priorityVal}` : '-';
 
-    const descRaw =
+    let descRaw =
       fields['System.Description'] ||
       fields['Microsoft.VSTS.Common.AcceptanceCriteria'] ||
       fields['Microsoft.VSTS.TCM.ReproSteps'] ||
       '';
+
+    if (!descRaw && fields['Custom.RawCard']) {
+      const raw = fields['Custom.RawCard'] as Record<string, unknown>;
+      descRaw = (raw.description || raw.desc || raw.details || raw.content || raw.notes || raw.summary || '') as string;
+    }
+
     const cleanDescription = stripHtmlToPlainText(descRaw);
 
     const sprint = fields['System.IterationPath']?.split('\\').pop() || fields['System.IterationPath'] || '';
@@ -307,7 +314,12 @@ export const exportTasksToFile = async ({
     if (cols.id) rowData.id = item.id || fields['System.Id'];
     if (cols.title) rowData.title = fields['System.Title'] || '';
     if (cols.description) rowData.description = cleanDescription;
-    if (cols.spentHours) rowData.spentHours = null; // Blank for manual user entry
+    const spentHoursVal = fields['Custom.SpentHours'] ?? fields['Microsoft.VSTS.Scheduling.CompletedWork'];
+    if (cols.spentHours) {
+      rowData.spentHours = (spentHoursVal !== undefined && spentHoursVal !== null && spentHoursVal !== '')
+        ? Number(spentHoursVal)
+        : null;
+    }
     if (cols.updatedDate) rowData.updatedDate = formatExportDate(fields['System.ChangedDate']);
     if (cols.createdDate) rowData.createdDate = formatExportDate(fields['System.CreatedDate']);
     if (cols.state) rowData.state = fields['System.State'] || '';

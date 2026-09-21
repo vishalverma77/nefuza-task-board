@@ -9,9 +9,10 @@ import { SummaryCards } from './SummaryCards';
 import { TaskListTable } from '../workItems/TaskListTable';
 import { TaskDetailDrawer } from '../taskDetails/TaskDetailDrawer';
 import { fetchWorkItems } from '../../services/azureDevOpsApi';
+import { fetchUncurlWorkItems, syncTasqueeHoursForNefuzaTasks } from '../../services/uncurlApi';
 
 export const DashboardView: React.FC = () => {
-  const config = useSelector((state: RootState) => state.connection.config);
+  const { config, uncurlConfig, activeOrg } = useSelector((state: RootState) => state.connection);
   const [selectedStateFilter, setSelectedStateFilter] = useState('ALL');
 
   const {
@@ -21,18 +22,32 @@ export const DashboardView: React.FC = () => {
     error,
     refetch
   } = useQuery({
-    queryKey: ['workItems', config?.organization, config?.project, config?.isDemoMode],
-    queryFn: () => (config ? fetchWorkItems(config) : Promise.resolve([])),
-    enabled: !!config,
+    queryKey: [
+      'workItems',
+      activeOrg,
+      activeOrg === 'safbsdev' ? config?.organization : uncurlConfig?.organization,
+      activeOrg === 'safbsdev' ? config?.project : uncurlConfig?.requestUrl,
+      activeOrg === 'safbsdev' ? config?.isDemoMode : uncurlConfig?.bearerToken
+    ],
+    queryFn: async () => {
+      if (activeOrg === 'uncurl:health') {
+        if (!uncurlConfig || !uncurlConfig.bearerToken) return [];
+        return fetchUncurlWorkItems(uncurlConfig);
+      }
+      if (!config) return [];
+      const azureItems = await fetchWorkItems(config);
+      return syncTasqueeHoursForNefuzaTasks(azureItems, uncurlConfig);
+    },
+    enabled: activeOrg === 'uncurl:health' ? Boolean(uncurlConfig?.bearerToken) : Boolean(config),
   });
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', pb: 6 }}>
+    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', pb: { xs: 4, sm: 6 } }}>
       {/* Header Bar */}
       <Header onRefresh={() => refetch()} isRefreshing={isLoading || isRefetching} />
 
       {/* Main Dashboard Area */}
-      <Container maxWidth="xl" sx={{ mt: 4 }}>
+      <Container maxWidth="xl" sx={{ mt: { xs: 2, sm: 3, md: 4 }, px: { xs: 1.5, sm: 2.5, md: 3 } }}>
         {error && (
           <Alert
             severity="error"
@@ -43,7 +58,9 @@ export const DashboardView: React.FC = () => {
             }
             sx={{ mb: 3, borderRadius: 2 }}
           >
-            Failed to fetch work items from Azure DevOps. Check your permissions or network connection.
+            {activeOrg === 'uncurl:health'
+              ? (error as Error)?.message || 'Failed to fetch tasks from Tasquee Board. Check your Bearer token.'
+              : 'Failed to fetch work items from Azure DevOps. Check your permissions or network connection.'}
           </Alert>
         )}
 

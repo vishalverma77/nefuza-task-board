@@ -178,7 +178,7 @@ azureProxyApp.post('/sync-google-sheet', async (req: Request, res: Response) => 
     const response = await axios.post(webhookUrl, payload, {
       headers: { 'Content-Type': 'application/json' },
       maxRedirects: 10,
-      timeout: 45000,
+      timeout: 90000,
       validateStatus: (status) => status < 500
     });
 
@@ -224,6 +224,245 @@ azureProxyApp.post('/sync-google-sheet', async (req: Request, res: Response) => 
     return res.status(status).json({
       success: false,
       message: errObj.message || 'Failed to communicate with Google Sheet Webhook'
+    });
+  }
+});
+
+// Board Tasks Proxy (bypasses browser CORS for board_cards)
+azureProxyApp.post(['/board-tasks', '/uncurl-tasks'], async (req: Request, res: Response) => {
+  const { requestUrl, apiKey, bearerToken } = req.body;
+
+  if (!requestUrl || !apiKey || !bearerToken) {
+    return res.status(400).json({
+      success: false,
+      message: 'Request URL, API Key, and Bearer Token are required.'
+    });
+  }
+
+  const cleanToken = bearerToken.trim().startsWith('Bearer ') ? bearerToken.trim() : `Bearer ${bearerToken.trim()}`;
+
+  console.log(`[Board Tasks Proxy] Fetching board cards from: ${requestUrl}`);
+
+  try {
+    const response = await axios.get(requestUrl.trim(), {
+      headers: {
+        'apikey': apiKey.trim(),
+        'Authorization': cleanToken,
+        'Accept': 'application/json',
+        'Accept-Profile': 'public'
+      },
+      timeout: 20000,
+      validateStatus: (status) => status < 500
+    });
+
+    if (response.status >= 400) {
+      return res.status(response.status).json({
+        success: false,
+        message: response.data?.message || response.data?.error || `Supabase returned HTTP status ${response.status}`,
+        data: response.data
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: response.data
+    });
+  } catch (error: unknown) {
+    const errObj = error as { message?: string; response?: { status?: number; data?: { message?: string } } };
+    console.error('[Board Tasks Proxy Error]:', errObj.message);
+    const status = errObj.response?.status || 500;
+    return res.status(status).json({
+      success: false,
+      message: errObj.response?.data?.message || errObj.message || 'Failed to fetch tasks from Supabase'
+    });
+  }
+});
+
+// Board Card Hours Proxy
+azureProxyApp.post(['/board-card-hours', '/uncurl-card-hours'], async (req: Request, res: Response) => {
+  const { cardId, apiKey, bearerToken } = req.body;
+
+  if (!apiKey || !bearerToken) {
+    return res.status(400).json({
+      success: false,
+      message: 'API Key and Bearer Token are required.'
+    });
+  }
+
+  const cleanToken = bearerToken.trim().startsWith('Bearer ') ? bearerToken.trim() : `Bearer ${bearerToken.trim()}`;
+  
+  let targetUrl = 'https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/card_hours?select=*&order=logged_at.desc';
+  if (cardId && cardId !== 'ALL') {
+    targetUrl = `https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/card_hours?select=*&card_id=eq.${encodeURIComponent(cardId)}&order=logged_at.desc`;
+  }
+
+  console.log(`[Uncurl Proxy] Fetching card hours: ${targetUrl}`);
+
+  try {
+    const response = await axios.get(targetUrl, {
+      headers: {
+        'apikey': apiKey.trim(),
+        'Authorization': cleanToken,
+        'Accept': 'application/json',
+        'Accept-Profile': 'public'
+      },
+      timeout: 20000,
+      validateStatus: (status) => status < 500
+    });
+
+    if (response.status >= 400) {
+      return res.status(response.status).json({
+        success: false,
+        message: response.data?.message || response.data?.error || `Supabase returned HTTP status ${response.status}`,
+        data: response.data
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: response.data
+    });
+  } catch (error: unknown) {
+    const errObj = error as { message?: string; response?: { status?: number; data?: { message?: string } } };
+    console.error('[Uncurl Card Hours Proxy Error]:', errObj.message);
+    const status = errObj.response?.status || 500;
+    return res.status(status).json({
+      success: false,
+      message: errObj.response?.data?.message || errObj.message || 'Failed to fetch card hours from Supabase'
+    });
+  }
+});
+
+// Create Card Hours (Log Hours on Tasquee)
+azureProxyApp.post('/create-card-hours', async (req: Request, res: Response) => {
+  const { apiKey, bearerToken, hoursData } = req.body;
+
+  if (!apiKey || !bearerToken || !hoursData || !hoursData.card_id || hoursData.hours === undefined) {
+    return res.status(400).json({
+      success: false,
+      message: 'API Key, Bearer Token, card_id, and hours are required.'
+    });
+  }
+
+  const cleanToken = bearerToken.trim().startsWith('Bearer ') ? bearerToken.trim() : `Bearer ${bearerToken.trim()}`;
+  const targetUrl = 'https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/card_hours?select=*';
+
+  console.log(`[Tasquee Card Hours Log] Posting hours to: ${targetUrl}`, hoursData);
+
+  try {
+    const response = await axios.post(targetUrl, hoursData, {
+      headers: {
+        'apikey': apiKey.trim(),
+        'Authorization': cleanToken,
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.pgrst.object+json',
+        'Prefer': 'return=representation'
+      },
+      timeout: 20000,
+      validateStatus: (status) => status < 500
+    });
+
+    if (response.status >= 400) {
+      return res.status(response.status).json({
+        success: false,
+        message: response.data?.message || response.data?.error || `Supabase returned HTTP status ${response.status}`,
+        data: response.data
+      });
+    }
+
+    return res.status(201).json({
+      success: true,
+      data: response.data,
+      message: 'Hours successfully logged on Tasquee!'
+    });
+  } catch (error: unknown) {
+    const errObj = error as { message?: string; response?: { status?: number; data?: { message?: string } } };
+    console.error('[Tasquee Card Hours Create Error]:', errObj.message);
+    const status = errObj.response?.status || 500;
+    return res.status(status).json({
+      success: false,
+      message: errObj.response?.data?.message || errObj.message || 'Failed to log hours on Tasquee'
+    });
+  }
+});
+
+// Create card on Tasquee / Supabase
+azureProxyApp.post('/create-tasquee-card', async (req: Request, res: Response) => {
+  const { apiKey, bearerToken, cardData } = req.body;
+
+  if (!apiKey || !bearerToken || !cardData) {
+    return res.status(400).json({
+      success: false,
+      message: 'API Key, Bearer Token, and card data are required.'
+    });
+  }
+
+  const cleanToken = bearerToken.trim().startsWith('Bearer ') ? bearerToken.trim() : `Bearer ${bearerToken.trim()}`;
+  const targetUrl = 'https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/board_cards?select=*';
+
+  console.log(`[Tasquee Card Create] Posting new card to: ${targetUrl}`, cardData);
+
+  try {
+    const response = await axios.post(targetUrl, cardData, {
+      headers: {
+        'apikey': apiKey.trim(),
+        'Authorization': cleanToken,
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.pgrst.object+json',
+        'Prefer': 'return=representation'
+      },
+      timeout: 20000,
+      validateStatus: (status) => status < 500
+    });
+
+    if (response.status >= 400) {
+      return res.status(response.status).json({
+        success: false,
+        message: response.data?.message || response.data?.error || `Supabase returned HTTP status ${response.status}`,
+        data: response.data
+      });
+    }
+
+    const createdCard = response.data;
+
+    // If description provided, also execute PATCH request to update description on the card
+    if (cardData.description && createdCard && (createdCard.id || (Array.isArray(createdCard) && createdCard[0]?.id))) {
+      const cardId = createdCard.id || createdCard[0].id;
+      try {
+        const patchUrl = `https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/board_cards?id=eq.${encodeURIComponent(cardId)}`;
+        console.log(`[Tasquee Card Patch] Updating description on: ${patchUrl}`);
+        await axios.patch(
+          patchUrl,
+          { description: cardData.description },
+          {
+            headers: {
+              'apikey': apiKey.trim(),
+              'Authorization': cleanToken,
+              'Content-Type': 'application/json',
+              'Accept': '*/*'
+            },
+            timeout: 20000,
+            validateStatus: (status) => status < 500
+          }
+        );
+      } catch (patchError: unknown) {
+        const pErr = patchError as { message?: string };
+        console.warn('[Tasquee Card Patch Warning]:', pErr.message);
+      }
+    }
+
+    return res.status(201).json({
+      success: true,
+      data: response.data,
+      message: 'Task successfully added to Tasquee!'
+    });
+  } catch (error: unknown) {
+    const errObj = error as { message?: string; response?: { status?: number; data?: { message?: string } } };
+    console.error('[Tasquee Card Create Error]:', errObj.message);
+    const status = errObj.response?.status || 500;
+    return res.status(status).json({
+      success: false,
+      message: errObj.response?.data?.message || errObj.message || 'Failed to create task on Tasquee'
     });
   }
 });

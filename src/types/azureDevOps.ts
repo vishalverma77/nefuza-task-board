@@ -5,6 +5,15 @@ export interface AzureConnectionConfig {
   isDemoMode?: boolean;
 }
 
+export type OrgType = 'safbsdev' | 'uncurl:health';
+
+export interface UncurlConnectionConfig {
+  organization: string; // 'uncurl:health'
+  requestUrl: string;
+  apiKey: string;
+  bearerToken: string;
+}
+
 export type WorkItemState = 'New' | 'Active' | 'Resolved' | 'Closed' | 'Blocked' | 'In Progress' | 'Done' | 'To Do';
 
 export type WorkItemType = 'Task' | 'Bug' | 'User Story' | 'Feature' | 'Epic' | 'Issue';

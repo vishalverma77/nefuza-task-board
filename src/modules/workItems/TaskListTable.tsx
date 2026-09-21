@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
+import { useQueryClient } from '@tanstack/react-query';
+import { useSnackbar } from 'notistack';
 import {
   Card,
   Table,
@@ -24,7 +26,8 @@ import {
   Collapse,
   Snackbar,
   Alert,
-  AlertTitle
+  AlertTitle,
+  CircularProgress
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
@@ -42,9 +45,19 @@ import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import DateRangeIcon from '@mui/icons-material/DateRange';
 import ClearIcon from '@mui/icons-material/Clear';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import type { WorkItem, WorkItemType, AzureIdentity } from '../../types/azureDevOps';
-import { selectWorkItem } from '../azureConnection/connectionSlice';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ViewListIcon from '@mui/icons-material/ViewList';
+import ViewModuleIcon from '@mui/icons-material/ViewModule';
+import type { WorkItem, WorkItemType, AzureIdentity, UncurlConnectionConfig } from '../../types/azureDevOps';
+import type { RootState } from '../../app/store';
+import { selectWorkItem, updateWorkItemSpentHours } from '../azureConnection/connectionSlice';
 import { ExportTasksDialog, type ExportSuccessNotification } from './ExportTasksDialog';
+import { SecretWorkspaceDialog } from '../workspaceAuth/SecretWorkspaceDialog';
+import { TasqueeAuthDialog } from '../tasqueeAuth/TasqueeAuthDialog';
+import { LogHoursDialog } from '../taskDetails/LogHoursDialog';
+import { createTasqueeCard, fetchTasqueeExistingTaskIds, DEFAULT_UNCURL_CONFIG } from '../../services/uncurlApi';
 
 interface TaskListTableProps {
   workItems: WorkItem[];
@@ -60,6 +73,8 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
   onSelectStateFilter
 }) => {
   const dispatch = useDispatch();
+  const queryClient = useQueryClient();
+  const { enqueueSnackbar } = useSnackbar();
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
@@ -75,8 +90,172 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
 
   // Export Dialog State
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [isSecretDialogOpen, setIsSecretDialogOpen] = useState(false);
   const [successNotification, setSuccessNotification] = useState<ExportSuccessNotification | null>(null);
-  
+
+  // View Mode: 'auto' (cards on xs, table on sm+), or forced 'cards'/'table'
+  const [viewMode, setViewMode] = useState<'auto' | 'cards' | 'table'>('auto');
+
+  // Connection & Organization Context
+  const { activeOrg, uncurlConfig } = useSelector((state: RootState) => state.connection);
+
+  // Tasquee Created Cards Tracking (persisted locally & verified via live Tasquee GET API)
+  const [addedTasqueeIds, setAddedTasqueeIds] = useState<number[]>(() => {
+    try {
+      const saved = localStorage.getItem('tasquee_added_task_ids');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [addingTaskId, setAddingTaskId] = useState<number | null>(null);
+  const [isTasqueeAuthOpen, setIsTasqueeAuthOpen] = useState(false);
+  const [pendingTasqueeItem, setPendingTasqueeItem] = useState<WorkItem | null>(null);
+  const [tasqueeAuthError, setTasqueeAuthError] = useState<string | null>(null);
+  const [isLogHoursOpen, setIsLogHoursOpen] = useState(false);
+  const [logHoursTask, setLogHoursTask] = useState<WorkItem | null>(null);
+
+  // Sync live cards from Tasquee board GET API so deleted cards automatically re-enable the button
+  const syncTasqueeCards = React.useCallback(async (tokenOverride?: string) => {
+    const token =
+      tokenOverride ||
+      uncurlConfig?.bearerToken ||
+      (() => {
+        try {
+          const raw = localStorage.getItem('uncurl_health_session');
+          return raw ? JSON.parse(raw).bearerToken : '';
+        } catch {
+          return '';
+        }
+      })();
+
+    if (!token) return;
+
+    try {
+      const liveIds = await fetchTasqueeExistingTaskIds({
+        organization: 'uncurl:health',
+        requestUrl: DEFAULT_UNCURL_CONFIG.requestUrl,
+        apiKey: uncurlConfig?.apiKey || DEFAULT_UNCURL_CONFIG.apiKey,
+        bearerToken: token,
+      });
+
+      if (Array.isArray(liveIds)) {
+        setAddedTasqueeIds(liveIds);
+        localStorage.setItem('tasquee_added_task_ids', JSON.stringify(liveIds));
+      }
+    } catch (e) {
+      console.warn('Failed to sync live Tasquee cards:', e);
+    }
+  }, [uncurlConfig]);
+
+  // Initial and reactive fetch of live Tasquee tasks when table is viewed in Nefuza
+  React.useEffect(() => {
+    if (activeOrg === 'safbsdev') {
+      syncTasqueeCards();
+    }
+  }, [activeOrg, syncTasqueeCards]);
+
+  // 1-Click Add on Tasquee Handler for Nefuza tasks with ID > 173
+  const handleAddToTasquee = async (item: WorkItem, overrideToken?: string) => {
+    const token =
+      overrideToken ||
+      uncurlConfig?.bearerToken ||
+      (() => {
+        try {
+          const raw = localStorage.getItem('uncurl_health_session');
+          return raw ? JSON.parse(raw).bearerToken : '';
+        } catch {
+          return '';
+        }
+      })();
+
+    if (!token) {
+      setPendingTasqueeItem(item);
+      setTasqueeAuthError('Tasquee Bearer Token required. Please enter your token to authorize.');
+      setIsTasqueeAuthOpen(true);
+      return;
+    }
+
+    const effectiveConfig: UncurlConnectionConfig = {
+      organization: 'uncurl:health',
+      requestUrl: uncurlConfig?.requestUrl || DEFAULT_UNCURL_CONFIG.requestUrl,
+      apiKey: uncurlConfig?.apiKey || DEFAULT_UNCURL_CONFIG.apiKey,
+      bearerToken: token,
+    };
+
+    // Format title: "Task 174 - <task title>"
+    const rawTitle = (item.fields['System.Title'] || '').trim();
+    const prefixRegex = new RegExp(`^task\\s*#?\\s*${item.id}\\s*[-:]?\\s*`, 'i');
+    const cleanTitle = rawTitle.replace(prefixRegex, '').trim();
+    const formattedTitle = cleanTitle ? `Task ${item.id} - ${cleanTitle}` : `Task ${item.id}`;
+
+    // Clean HTML from description
+    const rawDesc = item.fields['System.Description'] || '';
+    const cleanDesc = rawDesc
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .trim();
+
+    setAddingTaskId(item.id);
+    try {
+      await createTasqueeCard(
+        {
+          column_id: '5466d98a-aebc-4d5d-beb0-f32ad41453db',
+          title: formattedTitle,
+          position: 1,
+          milestone_id: null,
+          description: cleanDesc || rawDesc,
+        },
+        effectiveConfig
+      );
+
+      // Re-sync live added IDs from Tasquee GET API immediately
+      await syncTasqueeCards(token);
+      setAddedTasqueeIds((prev) => (prev.includes(item.id) ? prev : [...prev, item.id]));
+
+      enqueueSnackbar(`"${formattedTitle}" added to Tasquee successfully!`, { variant: 'success' });
+      setSuccessNotification({
+        title: 'Added on Tasquee!',
+        message: `"${formattedTitle}" has been successfully added to Tasquee with full description!`,
+        actionLabel: 'Open Tasquee',
+        actionUrl: 'https://tasquee.syncglob.com/board/2a709fe2-47f7-4f9a-8d85-1a612711dfde'
+      });
+    } catch (err: unknown) {
+      const errObj = err as { message?: string; response?: { status?: number; data?: unknown } };
+      const isUnauthorized =
+        errObj.message?.includes('401') ||
+        errObj.response?.status === 401 ||
+        errObj.message?.toLowerCase().includes('unauthorized') ||
+        errObj.message?.toLowerCase().includes('jwt');
+
+      if (isUnauthorized) {
+        // Automatically prompt with authorization dialog!
+        enqueueSnackbar('Tasquee token expired or invalid (HTTP 401). Please authorize.', { variant: 'warning' });
+        setPendingTasqueeItem(item);
+        setTasqueeAuthError('Authorization expired or invalid (HTTP 401). Please enter your active Tasquee Bearer Token to authorize and add this task.');
+        setIsTasqueeAuthOpen(true);
+      } else {
+        const errorMsg = errObj.message || 'Error communicating with Tasquee API.';
+        enqueueSnackbar(errorMsg, { variant: 'error' });
+        setSuccessNotification({
+          title: 'Failed to Add to Tasquee',
+          message: errorMsg
+        });
+      }
+    } finally {
+      setAddingTaskId(null);
+    }
+  };
+
   // Sorting State
   const [sortBy, setSortBy] = useState<'changedDate' | 'id' | 'title' | 'priority'>('changedDate');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -346,8 +525,8 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
   return (
     <Card sx={{ borderRadius: 4, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
       {/* Search & Filter Toolbar */}
-      <Box sx={{ p: 2.5, bgcolor: 'background.paper', borderBottom: '1px solid', borderColor: 'divider' }}>
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center', justifyContent: 'space-between' }}>
+      <Box sx={{ p: { xs: 1.5, sm: 2.5 }, bgcolor: 'background.paper', borderBottom: '1px solid', borderColor: 'divider' }}>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: { xs: 1.25, sm: 2 }, alignItems: 'center', justifyContent: 'space-between' }}>
           <TextField
             placeholder="Search by Work Item ID or Title..."
             value={searchQuery}
@@ -356,7 +535,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
               setPage(0);
             }}
             size="small"
-            sx={{ minWidth: 260, flexGrow: 1 }}
+            sx={{ minWidth: { xs: '100%', sm: 260 }, width: { xs: '100%', md: 'auto' }, flexGrow: 1 }}
             slotProps={{
               input: {
                 startAdornment: (
@@ -368,7 +547,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
             }}
           />
 
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: { xs: 1, sm: 1.5 }, alignItems: 'center', width: { xs: '100%', md: 'auto' } }}>
             <FilterListIcon color="action" sx={{ display: { xs: 'none', sm: 'inline-block' } }} />
 
             {/* State Filter */}
@@ -381,7 +560,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 if (onSelectStateFilter) onSelectStateFilter(e.target.value);
                 setPage(0);
               }}
-              sx={{ minWidth: 120 }}
+              sx={{ minWidth: { xs: 'calc(50% - 6px)', sm: 120 }, flex: { xs: '1 1 calc(50% - 6px)', sm: 'initial' } }}
             >
               <MenuItem value="ALL">All States</MenuItem>
               <MenuItem value="New">New / To Do</MenuItem>
@@ -401,7 +580,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 setTypeFilter(e.target.value);
                 setPage(0);
               }}
-              sx={{ minWidth: 120 }}
+              sx={{ minWidth: { xs: 'calc(50% - 6px)', sm: 120 }, flex: { xs: '1 1 calc(50% - 6px)', sm: 'initial' } }}
             >
               <MenuItem value="ALL">All Types</MenuItem>
               <MenuItem value="Task">Task</MenuItem>
@@ -420,7 +599,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 setPriorityFilter(e.target.value);
                 setPage(0);
               }}
-              sx={{ minWidth: 100 }}
+              sx={{ minWidth: { xs: 'calc(50% - 6px)', sm: 100 }, flex: { xs: '1 1 calc(50% - 6px)', sm: 'initial' } }}
             >
               <MenuItem value="ALL">All</MenuItem>
               <MenuItem value="1">P1 - High</MenuItem>
@@ -439,7 +618,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 setAssignedFilter(e.target.value);
                 setPage(0);
               }}
-              sx={{ minWidth: 140 }}
+              sx={{ minWidth: { xs: 'calc(50% - 6px)', sm: 140 }, flex: { xs: '1 1 calc(50% - 6px)', sm: 'initial' } }}
             >
               <MenuItem value="ALL">All Users</MenuItem>
               {assignedUsers.map((user) => (
@@ -463,6 +642,8 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                   fontWeight: 700,
                   borderRadius: 2,
                   px: 1.8,
+                  minWidth: { xs: 'calc(50% - 6px)', sm: 'auto' },
+                  flex: { xs: '1 1 calc(50% - 6px)', sm: 'initial' },
                   borderColor: hasActiveDateFilter ? undefined : 'divider',
                   bgcolor: hasActiveDateFilter ? 'rgba(0, 180, 216, 0.15)' : undefined,
                   color: hasActiveDateFilter ? '#00b4d8' : 'text.primary',
@@ -502,12 +683,60 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 textTransform: 'none',
                 height: 40,
                 px: 2.2,
+                minWidth: { xs: 'calc(50% - 6px)', sm: 'auto' },
+                flex: { xs: '1 1 calc(50% - 6px)', sm: 'initial' },
                 borderRadius: 2,
                 boxShadow: '0 4px 14px rgba(0, 180, 216, 0.25)'
               }}
             >
-              Export to Excel
+              Export
             </Button>
+
+            {/* View Mode Toggle: Cards vs Table */}
+            <Tooltip title={viewMode === 'cards' ? 'Switch to Table View' : (viewMode === 'table' ? 'Switch to Card View' : 'Toggle Card/Table View')}>
+              <IconButton
+                size="small"
+                onClick={() =>
+                  setViewMode((prev) => (prev === 'cards' ? 'table' : prev === 'table' ? 'cards' : 'cards'))
+                }
+                sx={{
+                  bgcolor: 'action.hover',
+                  borderRadius: 2,
+                  p: 0.8,
+                  height: 40,
+                  width: 40,
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  color: '#00b4d8'
+                }}
+              >
+                {viewMode === 'cards' ? <ViewListIcon fontSize="small" /> : <ViewModuleIcon fontSize="small" />}
+              </IconButton>
+            </Tooltip>
+
+            {/* Discreet Info Icon for Secret Workspace Switcher */}
+            <Tooltip title="Table Properties">
+              <IconButton
+                size="small"
+                onClick={() => setIsSecretDialogOpen(true)}
+                sx={{
+                  color: 'text.disabled',
+                  opacity: 0.4,
+                  p: 0.8,
+                  height: 40,
+                  width: 40,
+                  borderRadius: 2,
+                  transition: 'opacity 0.2s',
+                  '&:hover': {
+                    opacity: 1,
+                    color: 'text.secondary',
+                    bgcolor: 'action.hover'
+                  }
+                }}
+              >
+                <InfoOutlinedIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
         </Box>
 
@@ -526,7 +755,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
               justifyContent: 'space-between'
             }}
           >
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center' }}>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'center', width: { xs: '100%', md: 'auto' } }}>
               <Typography variant="caption" sx={{ fontWeight: 800, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                 Filter By Date:
               </Typography>
@@ -540,7 +769,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                   setDateFilterType(e.target.value as 'changedDate' | 'createdDate');
                   setPage(0);
                 }}
-                sx={{ minWidth: 150 }}
+                sx={{ minWidth: { xs: '100%', sm: 150 }, width: { xs: '100%', sm: 'auto' } }}
               >
                 <MenuItem value="changedDate">Updated Date</MenuItem>
                 <MenuItem value="createdDate">Created Date</MenuItem>
@@ -557,7 +786,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                   setPage(0);
                 }}
                 slotProps={{ inputLabel: { shrink: true } }}
-                sx={{ width: 155 }}
+                sx={{ width: { xs: 'calc(50% - 6px)', sm: 155 }, flex: { xs: '1 1 calc(50% - 6px)', sm: 'initial' } }}
               />
 
               {/* End Date */}
@@ -571,7 +800,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                   setPage(0);
                 }}
                 slotProps={{ inputLabel: { shrink: true } }}
-                sx={{ width: 155 }}
+                sx={{ width: { xs: 'calc(50% - 6px)', sm: 155 }, flex: { xs: '1 1 calc(50% - 6px)', sm: 'initial' } }}
               />
 
               {/* Clear button */}
@@ -638,28 +867,251 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
         </Collapse>
       </Box>
 
-      {/* Table Content */}
-      <TableContainer>
-        <Table sx={{ minWidth: 900 }}>
+      {/* Mobile Cards List View (Visible on xs screens by default, or toggled via switcher) */}
+      <Box sx={{ display: viewMode === 'table' ? 'none' : (viewMode === 'cards' ? 'block' : { xs: 'block', sm: 'none' }), p: { xs: 1.5, sm: 2 } }}>
+        {isLoading ? (
+          Array.from({ length: 4 }).map((_, idx) => (
+            <Paper key={idx} variant="outlined" sx={{ p: 2, mb: 1.5, borderRadius: 2.5 }}>
+              <Skeleton width="40%" height={24} sx={{ mb: 1 }} />
+              <Skeleton width="90%" height={20} sx={{ mb: 1 }} />
+              <Skeleton width="60%" height={18} />
+            </Paper>
+          ))
+        ) : paginatedItems.length === 0 ? (
+          <Paper variant="outlined" sx={{ p: 4, textAlign: 'center', borderStyle: 'dashed', borderRadius: 3 }}>
+            <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 700 }}>
+              No work items found
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+              Try clearing filters or search query
+            </Typography>
+          </Paper>
+        ) : (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+            {paginatedItems.map((item) => {
+              const fields = item.fields;
+              const type = fields['System.WorkItemType'] || 'Task';
+              const state = fields['System.State'] || 'New';
+              const priority = fields['System.Priority'] || fields['Microsoft.VSTS.Common.Priority'] || '-';
+              const sprint = fields['System.IterationPath']?.split('\\').pop() || 'Unassigned';
+
+              let assignedName = 'Unassigned';
+              let avatarUrl = '';
+              const assignedObj = fields['System.AssignedTo'];
+              if (typeof assignedObj === 'string') assignedName = assignedObj;
+              else if (typeof assignedObj === 'object' && assignedObj !== null) {
+                const identity = assignedObj as AzureIdentity;
+                assignedName = identity.displayName || 'Unassigned';
+                avatarUrl = identity.imageUrl || '';
+              }
+
+              const spentHours = Number(
+                fields['Custom.SpentHours'] ??
+                fields['Microsoft.VSTS.Scheduling.CompletedWork'] ??
+                0
+              );
+
+              const isAddedOnTasquee = addedTasqueeIds.includes(item.id) || Boolean(item.fields['Custom.CardId']);
+
+              return (
+                <Paper
+                  key={item.id}
+                  variant="outlined"
+                  onClick={() => dispatch(selectWorkItem(item))}
+                  sx={{
+                    p: 2,
+                    borderRadius: 3,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    '&:hover': {
+                      borderColor: '#00b4d8',
+                      boxShadow: '0 4px 16px rgba(0, 180, 216, 0.12)',
+                      transform: 'translateY(-2px)'
+                    }
+                  }}
+                >
+                  {/* Top row: ID, Type, State, Priority */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.2, gap: 1, flexWrap: 'wrap' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+                      <Chip
+                        label={`#${item.id}`}
+                        size="small"
+                        sx={{ fontWeight: 800, bgcolor: 'rgba(0, 180, 216, 0.12)', color: '#0077b6', borderRadius: 1.5, height: 24, fontSize: '0.75rem' }}
+                      />
+                      <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, px: 0.8, py: 0.2, borderRadius: 1.5, bgcolor: 'action.hover' }}>
+                        {getWorkItemTypeIcon(type)}
+                        <Typography variant="caption" sx={{ fontWeight: 700, fontSize: '0.72rem' }}>{type}</Typography>
+                      </Box>
+                      {getStateChip(state)}
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      {getPriorityChip(priority)}
+                    </Box>
+                  </Box>
+
+                  {/* Task Title */}
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.primary', lineHeight: 1.35, mb: 1.2, fontSize: '0.88rem' }}>
+                    {fields['System.Title']}
+                  </Typography>
+
+                  {/* Action Badges Row: Tasquee integration & Hours */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap', mb: 1.2, pt: 0.5 }}>
+                    {/* Tasquee Add Button */}
+                    {activeOrg === 'safbsdev' && item.id > 173 && (
+                      isAddedOnTasquee ? (
+                        <Chip
+                          size="small"
+                          icon={<CheckCircleIcon sx={{ fontSize: '13px !important', color: '#15803d !important' }} />}
+                          label="Added on Tasquee"
+                          sx={{
+                            height: 24,
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            bgcolor: '#dcfce7',
+                            color: '#15803d',
+                            border: '1px solid #86efac',
+                            borderRadius: 1.5,
+                          }}
+                        />
+                      ) : (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={addingTaskId === item.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAddToTasquee(item);
+                          }}
+                          startIcon={
+                            addingTaskId === item.id ? (
+                              <CircularProgress size={12} color="inherit" />
+                            ) : (
+                              <AutoAwesomeIcon sx={{ fontSize: '13px !important' }} />
+                            )
+                          }
+                          sx={{
+                            height: 26,
+                            py: 0,
+                            px: 1,
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            textTransform: 'none',
+                            borderColor: '#00b4d8',
+                            color: '#0077b6',
+                            borderRadius: 1.5,
+                            bgcolor: 'rgba(0, 180, 216, 0.05)',
+                          }}
+                        >
+                          {addingTaskId === item.id ? 'Adding...' : '+ Add on Tasquee'}
+                        </Button>
+                      )
+                    )}
+
+                    {/* Hours badge & + Log button */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, ml: 'auto' }}>
+                      {spentHours > 0 && (
+                        <Chip
+                          icon={<AccessTimeIcon sx={{ fontSize: '0.8rem !important', color: '#854d0e !important' }} />}
+                          label={`${spentHours.toFixed(1)}h`}
+                          size="small"
+                          sx={{
+                            fontWeight: 800,
+                            fontSize: '0.72rem',
+                            bgcolor: '#fef9c3',
+                            color: '#854d0e',
+                            border: '1px solid #fde047',
+                            height: 24,
+                            borderRadius: 1.5
+                          }}
+                        />
+                      )}
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLogHoursTask(item);
+                          setIsLogHoursOpen(true);
+                        }}
+                        startIcon={<AccessTimeIcon sx={{ fontSize: '12px !important' }} />}
+                        sx={{
+                          height: 24,
+                          py: 0,
+                          px: 0.8,
+                          fontSize: '0.7rem',
+                          fontWeight: 700,
+                          textTransform: 'none',
+                          borderRadius: 1.5,
+                          borderColor: 'divider',
+                          color: 'text.secondary',
+                          '&:hover': {
+                            borderColor: '#00b4d8',
+                            color: '#0077b6',
+                            bgcolor: 'rgba(0, 180, 216, 0.08)'
+                          }
+                        }}
+                      >
+                        + Log
+                      </Button>
+                    </Box>
+                  </Box>
+
+                  {/* Bottom Meta Bar: Assigned user, Sprint & View */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pt: 1, borderTop: '1px solid', borderColor: 'divider', gap: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, minWidth: 0 }}>
+                      <Avatar
+                        src={avatarUrl}
+                        sx={{ width: 22, height: 22, fontSize: '0.7rem', bgcolor: '#00b4d8' }}
+                      >
+                        {assignedName.charAt(0).toUpperCase()}
+                      </Avatar>
+                      <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 130 }}>
+                        {assignedName}
+                      </Typography>
+                    </Box>
+
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
+                      <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.7rem' }}>
+                        {sprint}
+                      </Typography>
+                      <IconButton size="small" sx={{ p: 0.25, color: '#00b4d8' }}>
+                        <VisibilityIcon sx={{ fontSize: 16 }} />
+                      </IconButton>
+                    </Box>
+                  </Box>
+                </Paper>
+              );
+            })}
+          </Box>
+        )}
+      </Box>
+
+      {/* Desktop/Tablet Table Content */}
+      <TableContainer sx={{ display: viewMode === 'cards' ? 'none' : (viewMode === 'table' ? 'block' : { xs: 'none', sm: 'block' }), overflowX: 'auto', WebkitOverflowScrolling: 'touch', width: '100%' }}>
+        <Table sx={{ minWidth: 1050, width: '100%' }}>
           <TableHead sx={{ bgcolor: 'action.hover' }}>
             <TableRow>
-              <TableCell sx={{ fontWeight: 800, width: 90 }} onClick={() => handleSort('id')} style={{ cursor: 'pointer' }}>
+              <TableCell sx={{ fontWeight: 800, width: 75 }} onClick={() => handleSort('id')} style={{ cursor: 'pointer' }}>
                 ID {sortBy === 'id' && (sortOrder === 'asc' ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)}
               </TableCell>
-              <TableCell sx={{ fontWeight: 800 }} onClick={() => handleSort('title')} style={{ cursor: 'pointer' }}>
+              <TableCell sx={{ fontWeight: 800, minWidth: 240 }} onClick={() => handleSort('title')} style={{ cursor: 'pointer' }}>
                 Title {sortBy === 'title' && (sortOrder === 'asc' ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)}
               </TableCell>
-              <TableCell sx={{ fontWeight: 800, width: 130 }}>Type</TableCell>
-              <TableCell sx={{ fontWeight: 800, width: 140 }}>State</TableCell>
-              <TableCell sx={{ fontWeight: 800, width: 180 }}>Assigned To</TableCell>
-              <TableCell sx={{ fontWeight: 800, width: 110 }} onClick={() => handleSort('priority')} style={{ cursor: 'pointer' }}>
+              <TableCell sx={{ fontWeight: 800, width: 145 }}>Tasquee</TableCell>
+              <TableCell sx={{ fontWeight: 800, width: 100 }}>Type</TableCell>
+              <TableCell sx={{ fontWeight: 800, width: 115 }}>State</TableCell>
+              <TableCell sx={{ fontWeight: 800, width: 160, textAlign: 'right' }}>Spent Hours</TableCell>
+              <TableCell sx={{ fontWeight: 800, width: 140 }}>Assigned To</TableCell>
+              <TableCell sx={{ fontWeight: 800, width: 90 }} onClick={() => handleSort('priority')} style={{ cursor: 'pointer' }}>
                 Priority {sortBy === 'priority' && (sortOrder === 'asc' ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)}
               </TableCell>
-              <TableCell sx={{ fontWeight: 800, width: 130 }} onClick={() => handleSort('changedDate')} style={{ cursor: 'pointer' }}>
+              <TableCell sx={{ fontWeight: 800, width: 105 }} onClick={() => handleSort('changedDate')} style={{ cursor: 'pointer' }}>
                 Updated {sortBy === 'changedDate' && (sortOrder === 'asc' ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)}
               </TableCell>
-              <TableCell sx={{ fontWeight: 800, width: 130 }}>Sprint</TableCell>
-              <TableCell align="center" sx={{ fontWeight: 800, width: 80 }}>View</TableCell>
+              <TableCell sx={{ fontWeight: 800, width: 100 }}>Sprint</TableCell>
+              <TableCell align="center" sx={{ fontWeight: 800, width: 55 }}>View</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -667,19 +1119,21 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
               Array.from({ length: 5 }).map((_, idx) => (
                 <TableRow key={idx}>
                   <TableCell><Skeleton width={40} /></TableCell>
-                  <TableCell><Skeleton width={250} /></TableCell>
-                  <TableCell><Skeleton width={80} /></TableCell>
+                  <TableCell><Skeleton width={200} /></TableCell>
+                  <TableCell><Skeleton width={110} /></TableCell>
                   <TableCell><Skeleton width={70} /></TableCell>
-                  <TableCell><Skeleton width={120} /></TableCell>
-                  <TableCell><Skeleton width={30} /></TableCell>
                   <TableCell><Skeleton width={80} /></TableCell>
-                  <TableCell><Skeleton width={90} /></TableCell>
-                  <TableCell><Skeleton width={40} /></TableCell>
+                  <TableCell><Skeleton width={100} /></TableCell>
+                  <TableCell><Skeleton width={110} /></TableCell>
+                  <TableCell><Skeleton width={50} /></TableCell>
+                  <TableCell><Skeleton width={80} /></TableCell>
+                  <TableCell><Skeleton width={80} /></TableCell>
+                  <TableCell><Skeleton width={30} /></TableCell>
                 </TableRow>
               ))
             ) : paginatedItems.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} align="center" sx={{ py: 6 }}>
+                <TableCell colSpan={11} align="center" sx={{ py: 6 }}>
                   <Paper variant="outlined" sx={{ p: 4, display: 'inline-block', borderStyle: 'dashed', borderRadius: 3 }}>
                     <Typography variant="subtitle1" color="text.secondary" sx={{ fontWeight: 700 }}>
                       No work items found
@@ -720,6 +1174,8 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                   avatarUrl = identity.imageUrl || '';
                 }
 
+                const isAddedOnTasquee = addedTasqueeIds.includes(item.id) || Boolean(item.fields['Custom.CardId']);
+
                 return (
                   <TableRow
                     key={item.id}
@@ -734,46 +1190,209 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                       }
                     }}
                   >
-                    <TableCell sx={{ fontWeight: 800, color: '#00b4d8' }}>
+                    <TableCell sx={{ fontWeight: 800, color: '#00b4d8', whiteSpace: 'nowrap' }}>
                       #{item.id}
                     </TableCell>
+
+                    {/* Title Cell */}
                     <TableCell sx={{ fontWeight: 600 }}>
-                      <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary', lineHeight: 1.35 }}>
                         {fields['System.Title']}
                       </Typography>
                       {fields['System.Tags'] && (
-                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.6 }}>
+                        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
                           {fields['System.Tags'].split(';').map((tag) => (
-                            <Chip key={tag} label={tag.trim()} size="small" variant="outlined" sx={{ fontSize: '0.68rem', height: 18, borderRadius: 1 }} />
+                            <Chip key={tag} label={tag.trim()} size="small" variant="outlined" sx={{ fontSize: '0.65rem', height: 18, borderRadius: 1 }} />
                           ))}
                         </Box>
                       )}
                     </TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+
+                    {/* Dedicated Tasquee Column */}
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      {activeOrg === 'safbsdev' && item.id > 173 ? (
+                        isAddedOnTasquee ? (
+                          <Chip
+                            size="small"
+                            icon={<CheckCircleIcon sx={{ fontSize: '13px !important', color: '#15803d !important' }} />}
+                            label="Added on Tasquee"
+                            sx={{
+                              height: 24,
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              bgcolor: '#dcfce7',
+                              color: '#15803d',
+                              border: '1px solid #86efac',
+                              borderRadius: 1.5,
+                            }}
+                          />
+                        ) : (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={addingTaskId === item.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAddToTasquee(item);
+                            }}
+                            startIcon={
+                              addingTaskId === item.id ? (
+                                <CircularProgress size={12} color="inherit" />
+                              ) : (
+                                <AutoAwesomeIcon sx={{ fontSize: '13px !important' }} />
+                              )
+                            }
+                            sx={{
+                              height: 26,
+                              py: 0,
+                              px: 1,
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              textTransform: 'none',
+                              borderColor: '#00b4d8',
+                              color: '#0077b6',
+                              borderRadius: 1.5,
+                              bgcolor: 'rgba(0, 180, 216, 0.05)',
+                              whiteSpace: 'nowrap',
+                              '&:hover': {
+                                bgcolor: 'rgba(0, 180, 216, 0.15)',
+                                borderColor: '#0077b6',
+                              }
+                            }}
+                          >
+                            {addingTaskId === item.id ? 'Adding...' : '+ Add on Tasquee'}
+                          </Button>
+                        )
+                      ) : (
+                        <Typography variant="caption" color="text.disabled">-</Typography>
+                      )}
+                    </TableCell>
+
+                    {/* Type Cell */}
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
                         {getWorkItemTypeIcon(type)}
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>{type}</Typography>
                       </Box>
                     </TableCell>
-                    <TableCell>{getStateChip(state)}</TableCell>
-                    <TableCell>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Avatar src={avatarUrl} sx={{ width: 26, height: 26, fontSize: '0.8rem', bgcolor: '#00b4d8', fontWeight: 700 }}>
-                          {assignedName.charAt(0)}
+
+                    {/* State Cell */}
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      {getStateChip(state)}
+                    </TableCell>
+
+                    {/* Spent Hours Cell */}
+                    <TableCell sx={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <Box sx={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.8 }}>
+                        {(() => {
+                          const spentHours =
+                            fields['Custom.SpentHours'] ??
+                            fields['Microsoft.VSTS.Scheduling.CompletedWork'];
+                          const hasHours =
+                            spentHours !== undefined &&
+                            spentHours !== null &&
+                            spentHours !== '' &&
+                            Number(spentHours) > 0;
+
+                          if (hasHours) {
+                            return (
+                              <Box
+                                sx={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 0.5,
+                                  px: 1,
+                                  py: 0.3,
+                                  bgcolor: '#fef9c3',
+                                  color: '#854d0e',
+                                  borderRadius: 1.5,
+                                  border: '1px solid #fde047',
+                                  fontWeight: 800,
+                                  fontSize: '0.75rem',
+                                  whiteSpace: 'nowrap'
+                                }}
+                              >
+                                <AccessTimeIcon sx={{ fontSize: 13, color: '#ca8a04' }} />
+                                {Number(spentHours).toFixed(2)} hrs
+                              </Box>
+                            );
+                          }
+                          return (
+                            <Typography variant="caption" sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+                              -
+                            </Typography>
+                          );
+                        })()}
+
+                        {/* Clean + Log Button */}
+                        <Tooltip title="Log hours on this task">
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setLogHoursTask(item);
+                              setIsLogHoursOpen(true);
+                            }}
+                            startIcon={<AccessTimeIcon sx={{ fontSize: '13px !important' }} />}
+                            sx={{
+                              height: 26,
+                              py: 0,
+                              px: 1,
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              textTransform: 'none',
+                              borderColor: 'rgba(0, 180, 216, 0.4)',
+                              color: '#0077b6',
+                              borderRadius: 1.5,
+                              bgcolor: 'rgba(0, 180, 216, 0.05)',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0,
+                              '&:hover': {
+                                bgcolor: 'rgba(0, 180, 216, 0.15)',
+                                borderColor: '#0077b6',
+                              }
+                            }}
+                          >
+                            + Log
+                          </Button>
+                        </Tooltip>
+                      </Box>
+                    </TableCell>
+
+                    {/* Assigned To Cell */}
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                        <Avatar src={avatarUrl} sx={{ width: 24, height: 24, fontSize: '0.72rem', bgcolor: '#00b4d8' }}>
+                          {assignedName.charAt(0).toUpperCase()}
                         </Avatar>
-                        <Typography variant="body2" noWrap sx={{ maxWidth: 120, fontWeight: 500 }}>
+                        <Typography variant="body2" noWrap sx={{ fontWeight: 600, fontSize: '0.82rem', maxWidth: 120 }}>
                           {assignedName}
                         </Typography>
                       </Box>
                     </TableCell>
-                    <TableCell>{getPriorityChip(priority)}</TableCell>
-                    <TableCell sx={{ color: 'text.secondary', fontSize: '0.85rem' }}>
-                      {formatDate(fields['System.ChangedDate'])}
+
+                    {/* Priority Cell */}
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      {getPriorityChip(priority)}
                     </TableCell>
-                    <TableCell sx={{ color: 'text.secondary', fontSize: '0.85rem' }}>
-                      {sprint}
+
+                    {/* Updated Date Cell */}
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                        {formatDate(fields['System.ChangedDate'])}
+                      </Typography>
                     </TableCell>
-                    <TableCell align="center">
+
+                    {/* Sprint Cell */}
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                      <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary' }}>
+                        {sprint}
+                      </Typography>
+                    </TableCell>
+
+                    {/* View Action Cell */}
+                    <TableCell align="center" sx={{ whiteSpace: 'nowrap' }}>
                       <Tooltip title="View Details">
                         <IconButton
                           size="small"
@@ -807,6 +1426,20 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
           setRowsPerPage(parseInt(e.target.value, 10));
           setPage(0);
         }}
+        sx={{
+          borderTop: '1px solid',
+          borderColor: 'divider',
+          '.MuiTablePagination-toolbar': {
+            flexWrap: 'wrap',
+            justifyContent: { xs: 'center', sm: 'flex-end' },
+            px: { xs: 1, sm: 2 },
+            gap: { xs: 1, sm: 0 },
+            py: { xs: 1, sm: 0.5 },
+          },
+          '.MuiTablePagination-selectLabel, .MuiTablePagination-displayedRows': {
+            fontSize: { xs: '0.75rem', sm: '0.875rem' },
+          },
+        }}
       />
 
       {/* Export to Excel / CSV Dialog */}
@@ -818,6 +1451,78 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
         initialEndDate={endDate}
         initialDateType={dateFilterType}
         onSuccess={(notification) => setSuccessNotification(notification)}
+      />
+
+      {/* Secret Authenticated Workspace Management Dialog */}
+      <SecretWorkspaceDialog
+        open={isSecretDialogOpen}
+        onClose={() => setIsSecretDialogOpen(false)}
+      />
+
+      {/* Dedicated Tasquee Authorization Dialog */}
+      <TasqueeAuthDialog
+        open={isTasqueeAuthOpen}
+        onClose={() => {
+          setIsTasqueeAuthOpen(false);
+          setPendingTasqueeItem(null);
+          setTasqueeAuthError(null);
+        }}
+        pendingItem={pendingTasqueeItem}
+        errorMessage={tasqueeAuthError}
+        onAuthorized={(newToken) => {
+          syncTasqueeCards(newToken);
+          if (pendingTasqueeItem) {
+            handleAddToTasquee(pendingTasqueeItem, newToken);
+          }
+        }}
+      />
+
+      {/* 1-Click Log Hours Dialog in PLP */}
+      <LogHoursDialog
+        open={isLogHoursOpen}
+        onClose={() => {
+          setIsLogHoursOpen(false);
+          setLogHoursTask(null);
+        }}
+        workItem={logHoursTask}
+        uncurlConfig={uncurlConfig}
+        onSuccess={(newEntry, newTotal) => {
+          if (logHoursTask) {
+            logHoursTask.fields['Custom.SpentHours'] = newTotal;
+            logHoursTask.fields['Microsoft.VSTS.Scheduling.CompletedWork'] = newTotal;
+            dispatch(updateWorkItemSpentHours({ cardId: logHoursTask.id, spentHours: newTotal }));
+
+            // Update React Query cache so table re-renders with new hours immediately
+            queryClient.setQueriesData({ queryKey: ['workItems'] }, (oldData: WorkItem[] | undefined) => {
+              if (!oldData || !Array.isArray(oldData)) return oldData;
+              return oldData.map((item) => {
+                if (item.id === logHoursTask.id) {
+                  return {
+                    ...item,
+                    fields: {
+                      ...item.fields,
+                      'Custom.SpentHours': newTotal,
+                      'Microsoft.VSTS.Scheduling.CompletedWork': newTotal,
+                    },
+                  };
+                }
+                return item;
+              });
+            });
+
+            setSuccessNotification({
+              title: 'Hours Logged Successfully!',
+              message: `Successfully logged ${newEntry.hours} hrs on Task #${logHoursTask.id} (Total: ${newTotal.toFixed(2)} hrs).`,
+              actionLabel: 'Open Tasquee',
+              actionUrl: 'https://tasquee.syncglob.com/board/2a709fe2-47f7-4f9a-8d85-1a612711dfde'
+            });
+          }
+        }}
+        onNeedAuth={() => {
+          setIsLogHoursOpen(false);
+          setPendingTasqueeItem(logHoursTask);
+          setIsTasqueeAuthOpen(true);
+        }}
       />
 
       {/* Export & Google Sheet Sync Success Confirmation Notification */}
