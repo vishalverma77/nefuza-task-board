@@ -322,34 +322,78 @@ export const fetchUncurlWorkItems = async (config: UncurlConnectionConfig): Prom
     throw new Error('Tasquee Board credentials are incomplete. Please provide your Bearer token.');
   }
 
-  // Fetch cards and all card hours in parallel
-  const [cardsResult, hoursResult] = await Promise.allSettled([
-    apiClient.post<{ success: boolean; data: Record<string, unknown>[]; message?: string }>(
-      '/board-tasks',
-      {
-        requestUrl: config.requestUrl,
-        apiKey: config.apiKey,
-        bearerToken: config.bearerToken,
-      }
-    ),
-    apiClient.post<{ success: boolean; data: CardHourEntry[]; message?: string }>(
-      '/board-card-hours',
-      {
-        cardId: 'ALL',
-        apiKey: config.apiKey,
-        bearerToken: config.bearerToken,
-      }
-    ),
-  ]);
+  const cleanToken = config.bearerToken.trim().startsWith('Bearer ')
+    ? config.bearerToken.trim()
+    : `Bearer ${config.bearerToken.trim()}`;
 
-  if (cardsResult.status === 'rejected' || !cardsResult.value.data || cardsResult.value.data.success === false) {
-    const errMsg = cardsResult.status === 'rejected'
-      ? cardsResult.reason?.message
-      : cardsResult.value.data?.message;
-    throw new Error(errMsg || 'Failed to fetch tasks from Tasquee Board');
-  }
+  // Helper for resilient board cards fetch
+  const getCardsData = async (): Promise<Record<string, unknown>[]> => {
+    try {
+      const res = await apiClient.post<{ success: boolean; data: Record<string, unknown>[]; message?: string }>(
+        '/board-tasks',
+        {
+          requestUrl: config.requestUrl,
+          apiKey: config.apiKey,
+          bearerToken: config.bearerToken,
+        }
+      );
+      if (res.data && res.data.success && Array.isArray(res.data.data)) {
+        return res.data.data;
+      }
+    } catch {
+      // Fallback: Direct call to Supabase REST API
+    }
+    const resp = await fetch(config.requestUrl.trim(), {
+      headers: {
+        apikey: config.apiKey.trim(),
+        Authorization: cleanToken,
+        Accept: 'application/json',
+      },
+    });
+    if (!resp.ok) {
+      throw new Error(`Failed to fetch tasks from Tasquee Board (HTTP ${resp.status})`);
+    }
+    return (await resp.json()) as Record<string, unknown>[];
+  };
 
-  const rawCards = cardsResult.value.data.data;
+  // Helper for resilient hours fetch
+  const getHoursData = async (): Promise<CardHourEntry[]> => {
+    try {
+      const res = await apiClient.post<{ success: boolean; data: CardHourEntry[]; message?: string }>(
+        '/board-card-hours',
+        {
+          cardId: 'ALL',
+          apiKey: config.apiKey,
+          bearerToken: config.bearerToken,
+        }
+      );
+      if (res.data && res.data.success && Array.isArray(res.data.data)) {
+        return res.data.data;
+      }
+    } catch {
+      // Fallback: Direct call to Supabase REST API
+    }
+    try {
+      const targetUrl = 'https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/card_hours?select=*&order=logged_at.desc';
+      const resp = await fetch(targetUrl, {
+        headers: {
+          apikey: config.apiKey.trim(),
+          Authorization: cleanToken,
+          Accept: 'application/json',
+        },
+      });
+      if (resp.ok) {
+        return (await resp.json()) as CardHourEntry[];
+      }
+    } catch {
+      // Ignore fallback failure for hours
+    }
+    return [];
+  };
+
+  // Fetch cards and all card hours in parallel with full fallbacks
+  const [rawCards, hoursData] = await Promise.all([getCardsData(), getHoursData()]);
+
   if (!Array.isArray(rawCards)) {
     return [];
   }
@@ -358,16 +402,13 @@ export const fetchUncurlWorkItems = async (config: UncurlConnectionConfig): Prom
   const hoursMap: Record<string, number> = {};
   const logDescMap: Record<string, string[]> = {};
 
-  if (hoursResult.status === 'fulfilled' && hoursResult.value.data?.data) {
-    const hoursData = hoursResult.value.data.data;
-    if (Array.isArray(hoursData)) {
-      for (const entry of hoursData) {
-        if (entry.card_id) {
-          hoursMap[entry.card_id] = (hoursMap[entry.card_id] || 0) + (Number(entry.hours) || 0);
-          if (entry.description && typeof entry.description === 'string' && entry.description.trim()) {
-            if (!logDescMap[entry.card_id]) logDescMap[entry.card_id] = [];
-            logDescMap[entry.card_id].push(entry.description.trim());
-          }
+  if (Array.isArray(hoursData)) {
+    for (const entry of hoursData) {
+      if (entry.card_id) {
+        hoursMap[entry.card_id] = (hoursMap[entry.card_id] || 0) + (Number(entry.hours) || 0);
+        if (entry.description && typeof entry.description === 'string' && entry.description.trim()) {
+          if (!logDescMap[entry.card_id]) logDescMap[entry.card_id] = [];
+          logDescMap[entry.card_id].push(entry.description.trim());
         }
       }
     }
@@ -392,20 +433,45 @@ export const fetchUncurlCardHours = async (
     return [];
   }
 
-  const response = await apiClient.post<{ success: boolean; data: CardHourEntry[]; message?: string }>(
-    '/board-card-hours',
-    {
-      cardId,
-      apiKey: config.apiKey,
-      bearerToken: config.bearerToken,
+  try {
+    const response = await apiClient.post<{ success: boolean; data: CardHourEntry[]; message?: string }>(
+      '/board-card-hours',
+      {
+        cardId,
+        apiKey: config.apiKey,
+        bearerToken: config.bearerToken,
+      }
+    );
+    if (response.data && response.data.success && Array.isArray(response.data.data)) {
+      return response.data.data;
     }
-  );
-
-  if (!response.data || response.data.success === false) {
-    throw new Error(response.data?.message || 'Failed to fetch card hours');
+  } catch {
+    // Direct Supabase REST fallback
   }
 
-  return Array.isArray(response.data.data) ? response.data.data : [];
+  const cleanToken = config.bearerToken.trim().startsWith('Bearer ')
+    ? config.bearerToken.trim()
+    : `Bearer ${config.bearerToken.trim()}`;
+
+  let targetUrl = 'https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/card_hours?select=*&order=logged_at.desc';
+  if (cardId && cardId !== 'ALL') {
+    targetUrl = `https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/card_hours?select=*&card_id=eq.${encodeURIComponent(cardId)}&order=logged_at.desc`;
+  }
+
+  const resp = await fetch(targetUrl, {
+    headers: {
+      apikey: config.apiKey.trim(),
+      Authorization: cleanToken,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!resp.ok) {
+    throw new Error('Failed to fetch card hours');
+  }
+
+  const data = (await resp.json()) as CardHourEntry[];
+  return Array.isArray(data) ? data : [];
 };
 
 export interface CreateTasqueeCardPayload {
@@ -436,26 +502,74 @@ export const createTasqueeCard = async (
     throw new Error('Tasquee Bearer Token is required. Please authorize your token first.');
   }
 
-  const response = await apiClient.post<{ success: boolean; data: Record<string, unknown>; message?: string }>(
-    '/create-tasquee-card',
-    {
-      apiKey: config.apiKey,
-      bearerToken: config.bearerToken,
-      cardData: {
-        column_id: cardData.column_id || '5466d98a-aebc-4d5d-beb0-f32ad41453db',
-        title: cardData.title,
-        position: cardData.position ?? 1,
-        milestone_id: cardData.milestone_id ?? null,
-        description: cardData.description || '',
-      },
-    }
-  );
+  const payloadCard = {
+    column_id: cardData.column_id || '5466d98a-aebc-4d5d-beb0-f32ad41453db',
+    title: cardData.title,
+    position: cardData.position ?? 1,
+    milestone_id: cardData.milestone_id ?? null,
+    description: cardData.description || '',
+  };
 
-  if (!response.data || response.data.success === false) {
-    throw new Error(response.data?.message || 'Failed to create task on Tasquee');
+  try {
+    const response = await apiClient.post<{ success: boolean; data: Record<string, unknown>; message?: string }>(
+      '/create-tasquee-card',
+      {
+        apiKey: config.apiKey,
+        bearerToken: config.bearerToken,
+        cardData: payloadCard,
+      }
+    );
+    if (response.data && response.data.success && response.data.data) {
+      return response.data.data;
+    }
+  } catch {
+    // Direct Supabase REST fallback
   }
 
-  return response.data.data;
+  const cleanToken = config.bearerToken.trim().startsWith('Bearer ')
+    ? config.bearerToken.trim()
+    : `Bearer ${config.bearerToken.trim()}`;
+
+  const targetUrl = 'https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/board_cards?select=*';
+  const resp = await fetch(targetUrl, {
+    method: 'POST',
+    headers: {
+      apikey: config.apiKey.trim(),
+      Authorization: cleanToken,
+      'Content-Type': 'application/json',
+      Accept: 'application/vnd.pgrst.object+json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify(payloadCard),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Failed to create task on Tasquee: ${errText || resp.statusText}`);
+  }
+
+  const createdCard = (await resp.json()) as Record<string, unknown>;
+
+  if (payloadCard.description && createdCard && (createdCard.id || (Array.isArray(createdCard) && (createdCard as Array<Record<string, unknown>>)[0]?.id))) {
+    const cardId = createdCard.id || (createdCard as Array<Record<string, unknown>>)[0].id;
+    try {
+      const patchUrl = `https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/board_cards?id=eq.${encodeURIComponent(String(cardId))}`;
+      await fetch(patchUrl, {
+        method: 'PATCH',
+        headers: {
+          apikey: config.apiKey.trim(),
+          Authorization: cleanToken,
+          'Content-Type': 'application/json',
+          Accept: '*/*',
+        },
+        body: JSON.stringify({ description: payloadCard.description }),
+      });
+    } catch {
+      // Ignore patch error
+    }
+  }
+
+  return createdCard;
 };
 
 /**
@@ -469,6 +583,26 @@ export const fetchTasqueeExistingTaskIds = async (
     return [];
   }
 
+  const cleanToken = config.bearerToken.trim().startsWith('Bearer ')
+    ? config.bearerToken.trim()
+    : `Bearer ${config.bearerToken.trim()}`;
+
+  const parseTaskIds = (cardsList: Array<{ id: string; title?: string }>): number[] => {
+    const ids: number[] = [];
+    for (const card of cardsList) {
+      if (typeof card.title === 'string') {
+        const match = card.title.match(/(?:task\s*#?|#|^)\s*(\d+)/i);
+        if (match && match[1]) {
+          const parsedId = parseInt(match[1], 10);
+          if (!isNaN(parsedId) && !ids.includes(parsedId)) {
+            ids.push(parsedId);
+          }
+        }
+      }
+    }
+    return ids;
+  };
+
   try {
     const response = await apiClient.post<{ success: boolean; data: Array<{ id: string; title?: string }> }>(
       '/board-tasks',
@@ -480,20 +614,25 @@ export const fetchTasqueeExistingTaskIds = async (
     );
 
     if (response.data && response.data.success && Array.isArray(response.data.data)) {
-      const ids: number[] = [];
-      for (const card of response.data.data) {
-        if (typeof card.title === 'string') {
-          // Extracts task ID from "task 174", "Task 174 - ...", "task #174", "#174", "174 - ...", "174: ...", etc.
-          const match = card.title.match(/(?:task\s*#?|#|^)\s*(\d+)/i);
-          if (match && match[1]) {
-            const parsedId = parseInt(match[1], 10);
-            if (!isNaN(parsedId) && !ids.includes(parsedId)) {
-              ids.push(parsedId);
-            }
-          }
-        }
+      return parseTaskIds(response.data.data);
+    }
+  } catch {
+    // Direct Supabase REST fallback
+  }
+
+  try {
+    const resp = await fetch(ALL_TASQUEE_BOARD_CARDS_URL, {
+      headers: {
+        apikey: config.apiKey.trim(),
+        Authorization: cleanToken,
+        Accept: 'application/json',
+      },
+    });
+    if (resp.ok) {
+      const data = (await resp.json()) as Array<{ id: string; title?: string }>;
+      if (Array.isArray(data)) {
+        return parseTaskIds(data);
       }
-      return ids;
     }
   } catch (err) {
     console.warn('[Tasquee Sync] Could not fetch existing cards to check added status:', err);
@@ -521,26 +660,54 @@ export const logCardHours = async (
     throw new Error('Tasquee Bearer Token is required to log hours. Please authorize your session first.');
   }
 
-  const response = await apiClient.post<{ success: boolean; data: CardHourEntry; message?: string }>(
-    '/create-card-hours',
-    {
-      apiKey: config.apiKey,
-      bearerToken: config.bearerToken,
-      hoursData: {
-        card_id: payload.card_id,
-        hours: Number(payload.hours),
-        description: payload.description || null,
-        logged_by_email: payload.logged_by_email || 'vishalverma@syncglob.com',
-        logged_by_name: payload.logged_by_name || 'Vishal Verma',
-      },
-    }
-  );
+  const hoursData = {
+    card_id: payload.card_id,
+    hours: Number(payload.hours),
+    description: payload.description || null,
+    logged_by_email: payload.logged_by_email || 'vishalverma@syncglob.com',
+    logged_by_name: payload.logged_by_name || 'Vishal Verma',
+  };
 
-  if (!response.data || response.data.success === false) {
-    throw new Error(response.data?.message || 'Failed to log hours on Tasquee');
+  try {
+    const response = await apiClient.post<{ success: boolean; data: CardHourEntry; message?: string }>(
+      '/create-card-hours',
+      {
+        apiKey: config.apiKey,
+        bearerToken: config.bearerToken,
+        hoursData,
+      }
+    );
+
+    if (response.data && response.data.success && response.data.data) {
+      return response.data.data;
+    }
+  } catch {
+    // Direct Supabase REST fallback
   }
 
-  return response.data.data;
+  const cleanToken = config.bearerToken.trim().startsWith('Bearer ')
+    ? config.bearerToken.trim()
+    : `Bearer ${config.bearerToken.trim()}`;
+
+  const targetUrl = 'https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/card_hours?select=*';
+  const resp = await fetch(targetUrl, {
+    method: 'POST',
+    headers: {
+      apikey: config.apiKey.trim(),
+      Authorization: cleanToken,
+      'Content-Type': 'application/json',
+      Accept: 'application/vnd.pgrst.object+json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify(hoursData),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Failed to log hours on Tasquee: ${errText || resp.statusText}`);
+  }
+
+  return (await resp.json()) as CardHourEntry;
 };
 
 /**
@@ -551,6 +718,19 @@ export const findTasqueeCardForTask = async (
   config: UncurlConnectionConfig
 ): Promise<{ id: string; title: string } | null> => {
   if (!config.apiKey || !config.bearerToken) return null;
+
+  const cleanToken = config.bearerToken.trim().startsWith('Bearer ')
+    ? config.bearerToken.trim()
+    : `Bearer ${config.bearerToken.trim()}`;
+
+  const findMatch = (cardsList: Array<{ id: string; title?: string }>) => {
+    const match = cardsList.find((c) => {
+      if (!c.title) return false;
+      const re = new RegExp(`(?:task\\s*#?|#|^)\\s*${taskId}(\\s+|-|:|$|\\b)`, 'i');
+      return re.test(c.title);
+    });
+    return match ? { id: match.id, title: match.title || '' } : null;
+  };
 
   try {
     const response = await apiClient.post<{ success: boolean; data: Array<{ id: string; title?: string }> }>(
@@ -563,16 +743,31 @@ export const findTasqueeCardForTask = async (
     );
 
     if (response.data && response.data.success && Array.isArray(response.data.data)) {
-      const match = response.data.data.find((c) => {
-        if (!c.title) return false;
-        const re = new RegExp(`(?:task\\s*#?|#|^)\\s*${taskId}(\\s+|-|:|$|\\b)`, 'i');
-        return re.test(c.title);
-      });
-      return match ? { id: match.id, title: match.title || '' } : null;
+      const match = findMatch(response.data.data);
+      if (match) return match;
+    }
+  } catch {
+    // Direct Supabase REST fallback
+  }
+
+  try {
+    const resp = await fetch(ALL_TASQUEE_BOARD_CARDS_URL, {
+      headers: {
+        apikey: config.apiKey.trim(),
+        Authorization: cleanToken,
+        Accept: 'application/json',
+      },
+    });
+    if (resp.ok) {
+      const data = (await resp.json()) as Array<{ id: string; title?: string }>;
+      if (Array.isArray(data)) {
+        return findMatch(data);
+      }
     }
   } catch (e) {
     console.warn('Could not match Tasquee card for task', e);
   }
+
   return null;
 };
 
@@ -649,23 +844,47 @@ export const syncTasqueeHoursForNefuzaTasks = async (
     return workItems;
   }
 
-  // 3. Fetch live Tasquee cards and card hours in parallel from Supabase
-  try {
-    const [cardsRes, hoursRes] = await Promise.allSettled([
-      apiClient.post<{ success: boolean; data: Array<{ id: string; title?: string }> }>('/board-tasks', {
-        requestUrl: ALL_TASQUEE_BOARD_CARDS_URL,
-        apiKey: effectiveConfig.apiKey,
-        bearerToken: effectiveConfig.bearerToken,
-      }),
-      apiClient.post<{ success: boolean; data: CardHourEntry[] }>('/board-card-hours', {
-        cardId: 'ALL',
-        apiKey: effectiveConfig.apiKey,
-        bearerToken: effectiveConfig.bearerToken,
-      }),
-    ]);
+  const cleanToken = effectiveConfig.bearerToken.trim().startsWith('Bearer ')
+    ? effectiveConfig.bearerToken.trim()
+    : `Bearer ${effectiveConfig.bearerToken.trim()}`;
 
-    const cards = cardsRes.status === 'fulfilled' && cardsRes.value.data?.data ? cardsRes.value.data.data : [];
-    const hours = hoursRes.status === 'fulfilled' && hoursRes.value.data?.data ? hoursRes.value.data.data : [];
+  // 3. Fetch live Tasquee cards and card hours in parallel with direct fallbacks
+  try {
+    const fetchCards = async (): Promise<Array<{ id: string; title?: string }>> => {
+      try {
+        const res = await apiClient.post<{ success: boolean; data: Array<{ id: string; title?: string }> }>('/board-tasks', {
+          requestUrl: ALL_TASQUEE_BOARD_CARDS_URL,
+          apiKey: effectiveConfig.apiKey,
+          bearerToken: effectiveConfig.bearerToken,
+        });
+        if (res.data?.success && Array.isArray(res.data.data)) return res.data.data;
+      } catch {
+        // Fallback
+      }
+      const r = await fetch(ALL_TASQUEE_BOARD_CARDS_URL, {
+        headers: { apikey: effectiveConfig.apiKey.trim(), Authorization: cleanToken, Accept: 'application/json' },
+      });
+      return r.ok ? ((await r.json()) as Array<{ id: string; title?: string }>) : [];
+    };
+
+    const fetchHours = async (): Promise<CardHourEntry[]> => {
+      try {
+        const res = await apiClient.post<{ success: boolean; data: CardHourEntry[] }>('/board-card-hours', {
+          cardId: 'ALL',
+          apiKey: effectiveConfig.apiKey,
+          bearerToken: effectiveConfig.bearerToken,
+        });
+        if (res.data?.success && Array.isArray(res.data.data)) return res.data.data;
+      } catch {
+        // Fallback
+      }
+      const r = await fetch('https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/card_hours?select=*&order=logged_at.desc', {
+        headers: { apikey: effectiveConfig.apiKey.trim(), Authorization: cleanToken, Accept: 'application/json' },
+      });
+      return r.ok ? ((await r.json()) as CardHourEntry[]) : [];
+    };
+
+    const [cards, hours] = await Promise.all([fetchCards(), fetchHours()]);
 
     // Sum hours by card_id
     const sumByCardId: Record<string, number> = {};
