@@ -382,7 +382,7 @@ export const syncTasksToGoogleSheet = async ({
     spentHoursColIndex,
   };
 
-  // Dispatch via Backend Proxy (ensures full CORS bypass and automatic Google 302 redirect following)
+  // 1. Try Backend Proxy first
   try {
     const response = await apiClient.post<SyncGoogleSheetResult>(
       '/sync-google-sheet',
@@ -395,14 +395,50 @@ export const syncTasksToGoogleSheet = async ({
       }
     );
 
-    if (response.data) {
-      if (response.data.success === false) {
-        throw new Error(response.data.message || 'Google Sheet sync returned an error.');
-      }
+    if (response.data && response.data.success !== false) {
       return response.data;
     }
-    throw new Error('No response received from Google Sheet proxy.');
-  } catch (error: unknown) {
-    throw new Error(formatApiError(error, 'Failed to sync with Google Sheet Webhook.'));
+  } catch {
+    // Fallback to direct client-side fetch to Google Apps Script Webhook
+  }
+
+  // 2. Direct client-side fetch fallback to Google Apps Script Webhook
+  try {
+    let execUrl = cleanWebhook;
+    if (!execUrl.endsWith('/exec') && !execUrl.includes('/exec?')) {
+      execUrl = execUrl.replace(/\/+$/, '') + '/exec';
+    }
+
+    const res = await fetch(execUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify(payload),
+      redirect: 'follow',
+    });
+
+    const resText = await res.text();
+    let resJson: { success?: boolean; message?: string; error?: string } = {};
+
+    try {
+      resJson = JSON.parse(resText);
+    } catch {
+      if (resText.includes('accounts.google.com') || resText.includes('<!DOCTYPE') || resText.includes('<html')) {
+        throw new Error('[HTTP 403] Google Apps Script Access Denied: In Apps Script, click Deploy > Manage deployments > Edit > set "Who has access" to "Anyone", then re-deploy.');
+      }
+    }
+
+    if (resJson.success === false) {
+      throw new Error(resJson.message || resJson.error || 'Apps Script returned an error.');
+    }
+
+    return {
+      success: true,
+      message: resJson.message || `Tab "${payload.sheetName}" synced to Google Sheet successfully!`,
+      tasksCount: payload.rows.length,
+    };
+  } catch (directErr: unknown) {
+    throw new Error(formatApiError(directErr, 'Failed to sync with Google Sheet Webhook.'));
   }
 };
