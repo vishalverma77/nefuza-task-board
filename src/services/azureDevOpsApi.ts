@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { apiClient } from './apiClient';
 import { formatApiError } from '../utils/errorUtils';
 import type { AzureConnectionConfig, WorkItem, WorkItemUpdate, WiqlQueryResult } from '../types/azureDevOps';

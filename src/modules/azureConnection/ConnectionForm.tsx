@@ -26,6 +26,7 @@ import SpeedIcon from '@mui/icons-material/Speed';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import HelpOutlinedIcon from '@mui/icons-material/HelpOutlined';
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
+import { setConnection } from './connectionSlice';
 import { validateAzureConnection } from '../../services/azureDevOpsApi';
 import { formatApiError } from '../../utils/errorUtils';
 import type { AzureConnectionConfig } from '../../types/azureDevOps';
