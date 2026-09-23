@@ -548,10 +548,11 @@ export const createTasqueeCard = async (
     throw new Error(`Failed to create task on Tasquee: ${errText || resp.statusText}`);
   }
 
-  const createdCard = (await resp.json()) as Record<string, unknown>;
+  const rawJson = (await resp.json()) as unknown;
+  const createdCard = (Array.isArray(rawJson) ? rawJson[0] : rawJson) as Record<string, unknown>;
 
-  if (payloadCard.description && createdCard && (createdCard.id || (Array.isArray(createdCard) && (createdCard as Array<Record<string, unknown>>)[0]?.id))) {
-    const cardId = createdCard.id || (createdCard as Array<Record<string, unknown>>)[0].id;
+  if (payloadCard.description && createdCard && createdCard.id) {
+    const cardId = createdCard.id;
     try {
       const patchUrl = `https://qoqnojeyetyicosfifdu.supabase.co/rest/v1/board_cards?id=eq.${encodeURIComponent(String(cardId))}`;
       await fetch(patchUrl, {

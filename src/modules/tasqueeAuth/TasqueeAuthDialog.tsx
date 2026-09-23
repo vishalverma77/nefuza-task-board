@@ -29,6 +29,7 @@ import { useSnackbar } from 'notistack';
 import type { RootState } from '../../app/store';
 import { setUncurlConfig } from '../azureConnection/connectionSlice';
 import { DEFAULT_UNCURL_CONFIG } from '../../services/uncurlApi';
+import { formatApiError } from '../../utils/errorUtils';
 import type { UncurlConnectionConfig, WorkItem } from '../../types/azureDevOps';
 
 const UNCURL_STORAGE_KEY = 'uncurl_health_session';
@@ -125,8 +126,7 @@ export const TasqueeAuthDialog: React.FC<TasqueeAuthDialogProps> = ({
       enqueueSnackbar('Tasquee token authorized successfully!', { variant: 'success' });
       onClose();
     } catch (err: unknown) {
-      const errObj = err as { message?: string };
-      const msg = errObj.message || 'Failed to save authorization.';
+      const msg = formatApiError(err, 'Failed to save authorization.');
       setLocalError(msg);
       enqueueSnackbar(msg, { variant: 'error' });
     } finally {

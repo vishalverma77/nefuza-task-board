@@ -1,5 +1,5 @@
-import axios from 'axios';
 import { apiClient } from './apiClient';
+import { formatApiError } from '../utils/errorUtils';
 import type { AzureConnectionConfig, WorkItem, WorkItemUpdate, WiqlQueryResult } from '../types/azureDevOps';
 import { MOCK_WORK_ITEMS, MOCK_WORK_ITEM_UPDATES } from '../utils/mockData';
 
@@ -51,7 +51,7 @@ export const validateAzureConnection = async (config: AzureConnectionConfig): Pr
     } else {
       return {
         success: false,
-        message: errObj.response?.data?.message || 'Validation failed. Please check organization, project, and PAT.'
+        message: formatApiError(error, 'Validation failed. Please check organization, project, and PAT.')
       };
     }
   }
@@ -67,7 +67,7 @@ export const validateAzureConnection = async (config: AzureConnectionConfig): Pr
     });
 
     if (orgRes.status === 401) {
-      return { success: false, message: 'Invalid Personal Access Token (PAT) or expired session.' };
+      return { success: false, message: '[HTTP 401] Invalid Personal Access Token (PAT) or expired session.' };
     }
 
     // Step 2: Project Check
@@ -77,21 +77,16 @@ export const validateAzureConnection = async (config: AzureConnectionConfig): Pr
     });
 
     if (projectRes.status === 404) {
-      return { success: false, message: `Project "${cleanProject}" not found in organization "${cleanOrg}".` };
+      return { success: false, message: `[HTTP 404] Project "${cleanProject}" not found in organization "${cleanOrg}".` };
     }
 
     isDirectClientMode = true;
     return { success: true };
   } catch (directErr: unknown) {
-    const errObj = directErr as { response?: { status?: number } };
-    if (errObj.response?.status === 401) {
-      return { success: false, message: 'Invalid Personal Access Token (PAT) or expired session.' };
-    } else if (errObj.response?.status === 404) {
-      return { success: false, message: `Organization "${cleanOrg}" or project "${cleanProject}" not found.` };
-    } else if (errObj.response?.status === 403) {
-      return { success: false, message: 'Access forbidden. Your PAT lacks required permissions.' };
-    }
-    return { success: false, message: 'Failed to connect to Azure DevOps. CORS restriction prevents direct browser calls; backend proxy server must be deployed.' };
+    return {
+      success: false,
+      message: formatApiError(directErr, 'Failed to connect to Azure DevOps. CORS restriction prevents direct browser calls; backend proxy server must be deployed.')
+    };
   }
 };
 

@@ -1,6 +1,7 @@
 import { apiClient } from '../services/apiClient';
 import type { WorkItem, AzureIdentity } from '../types/azureDevOps';
 import { stripHtmlToPlainText, formatExportDate, type ExportColumnOptions } from './exportToExcel';
+import { formatApiError } from './errorUtils';
 
 export const NEFUZA_GOOGLE_SHEET_ID = '17ZajNMt4Ri4crPXJzhQMmrdJ3NpNxFEdxKttFI1KGRY';
 export const NEFUZA_GOOGLE_SHEET_URL =
@@ -402,11 +403,6 @@ export const syncTasksToGoogleSheet = async ({
     }
     throw new Error('No response received from Google Sheet proxy.');
   } catch (error: unknown) {
-    const errObj = error as {
-      response?: { data?: { message?: string } };
-      message?: string;
-    };
-    const errMsg = errObj.response?.data?.message || errObj.message;
-    throw new Error(errMsg || 'Failed to sync with Google Sheet Webhook.');
+    throw new Error(formatApiError(error, 'Failed to sync with Google Sheet Webhook.'));
   }
 };

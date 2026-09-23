@@ -59,6 +59,7 @@ import {
   getOrgGoogleSheetDetails,
   getGoogleAppsScriptCode
 } from '../../utils/googleSheetsSync';
+import { formatApiError } from '../../utils/errorUtils';
 
 export interface ExportSuccessNotification {
   title: string;
@@ -303,8 +304,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
         });
       }
     } catch (err: unknown) {
-      const errObj = err as { message?: string };
-      const msg = errObj.message || 'Error communicating with Google Sheet Webhook.';
+      const msg = formatApiError(err, 'Error communicating with Google Sheet Webhook.');
       enqueueSnackbar(msg, { variant: 'error' });
       setSyncStatus({
         type: 'error',

@@ -25,6 +25,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { useSnackbar } from 'notistack';
 import type { WorkItem, UncurlConnectionConfig } from '../../types/azureDevOps';
 import { logCardHours, findTasqueeCardForTask, cacheNefuzaTaskHours, DEFAULT_UNCURL_CONFIG, type CardHourEntry } from '../../services/uncurlApi';
+import { formatApiError } from '../../utils/errorUtils';
 
 const HARDCODED_NAME = 'Vishal Verma';
 const HARDCODED_EMAIL = 'vishalverma@syncglob.com';
@@ -167,7 +168,7 @@ export const LogHoursDialog: React.FC<LogHoursDialogProps> = ({
       if (is401 && onNeedAuth) {
         onNeedAuth();
       }
-      const msg = errObj.message || 'Failed to log hours on Tasquee';
+      const msg = formatApiError(err, 'Failed to log hours on Tasquee.');
       setError(msg);
       enqueueSnackbar(msg, { variant: 'error' });
     } finally {

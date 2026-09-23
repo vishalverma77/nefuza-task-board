@@ -58,6 +58,7 @@ import { SecretWorkspaceDialog } from '../workspaceAuth/SecretWorkspaceDialog';
 import { TasqueeAuthDialog } from '../tasqueeAuth/TasqueeAuthDialog';
 import { LogHoursDialog } from '../taskDetails/LogHoursDialog';
 import { createTasqueeCard, fetchTasqueeExistingTaskIds, DEFAULT_UNCURL_CONFIG } from '../../services/uncurlApi';
+import { formatApiError } from '../../utils/errorUtils';
 
 interface TaskListTableProps {
   workItems: WorkItem[];
@@ -244,11 +245,11 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
         setTasqueeAuthError('Authorization expired or invalid (HTTP 401). Please enter your active Tasquee Bearer Token to authorize and add this task.');
         setIsTasqueeAuthOpen(true);
       } else {
-        const errorMsg = errObj.message || 'Error communicating with Tasquee API.';
-        enqueueSnackbar(errorMsg, { variant: 'error' });
+        const formattedErr = formatApiError(err, 'Failed to add task on Tasquee.');
+        enqueueSnackbar(formattedErr, { variant: 'error' });
         setSuccessNotification({
           title: 'Failed to Add to Tasquee',
-          message: errorMsg
+          message: formattedErr
         });
       }
     } finally {
