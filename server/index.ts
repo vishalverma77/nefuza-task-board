@@ -21,7 +21,17 @@ app.get('/', (_req: Request, res: Response) => {
     service: 'Azure DevOps Proxy Server',
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    endpoints: ['/health', '/api/azure/health', '/api/azure/validate', '/api/azure/proxy']
+    endpoints: [
+      '/health',
+      '/api/azure/health',
+      '/api/azure/validate',
+      '/api/azure/proxy',
+      '/api/azure/sync-google-sheet',
+      '/api/azure/board-tasks',
+      '/api/azure/board-card-hours',
+      '/api/azure/create-card-hours',
+      '/api/azure/create-tasquee-card'
+    ]
   });
 });
 
