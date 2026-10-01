@@ -20,20 +20,40 @@ export interface OrgSheetDetails {
   storageKey: string;
 }
 
-export const getOrgGoogleSheetDetails = (org?: string): OrgSheetDetails => {
-  if (org === 'uncurl:health') {
-    return {
-      spreadsheetId: UNCURL_GOOGLE_SHEET_ID,
-      sheetUrl: UNCURL_GOOGLE_SHEET_URL,
-      orgLabel: 'uncurl:health',
-      storageKey: 'uncurl_google_sheet_webhook',
-    };
+/**
+ * Extracts spreadsheet ID from either a full Google Sheet URL or raw ID string.
+ */
+export const extractSpreadsheetId = (urlOrId: string): string => {
+  if (!urlOrId) return '';
+  const trimmed = urlOrId.trim();
+  const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) {
+    return match[1];
   }
+  return trimmed;
+};
+
+export const getOrgGoogleSheetDetails = (org?: string): OrgSheetDetails => {
+  const isUncurl = org === 'uncurl:health';
+  const customUrlKey = isUncurl ? 'uncurl_custom_sheet_url' : 'nefuza_custom_sheet_url';
+  const customUrl = localStorage.getItem(customUrlKey)?.trim();
+
+  let spreadsheetId = isUncurl ? UNCURL_GOOGLE_SHEET_ID : NEFUZA_GOOGLE_SHEET_ID;
+  let sheetUrl = isUncurl ? UNCURL_GOOGLE_SHEET_URL : NEFUZA_GOOGLE_SHEET_URL;
+
+  if (customUrl) {
+    sheetUrl = customUrl;
+    const extracted = extractSpreadsheetId(customUrl);
+    if (extracted) {
+      spreadsheetId = extracted;
+    }
+  }
+
   return {
-    spreadsheetId: NEFUZA_GOOGLE_SHEET_ID,
-    sheetUrl: NEFUZA_GOOGLE_SHEET_URL,
-    orgLabel: 'safbsdev (Nefuza)',
-    storageKey: 'nefuza_google_sheet_webhook',
+    spreadsheetId,
+    sheetUrl,
+    orgLabel: isUncurl ? 'uncurl:health' : 'safbsdev (Nefuza)',
+    storageKey: isUncurl ? 'uncurl_google_sheet_webhook' : 'nefuza_google_sheet_webhook',
   };
 };
 
@@ -65,26 +85,38 @@ function doPost(e) {
     var headers = data.headers || [];
     var rows = data.rows || [];
     var spentHoursCol = data.spentHoursColIndex; // 1-based index
-    var targetSpreadsheetId = data.spreadsheetId || '${spreadsheetId}';
+    var rawSpreadsheetId = data.spreadsheetId || '${spreadsheetId}';
 
-    // 1. Open active spreadsheet (instant if container-bound) or fallback to ID
+    // 1. Clean spreadsheet ID (extract clean ID if full Google Sheet URL was provided)
+    var targetSpreadsheetId = rawSpreadsheetId;
+    if (targetSpreadsheetId && typeof targetSpreadsheetId === 'string') {
+      targetSpreadsheetId = targetSpreadsheetId.trim();
+      var idMatch = targetSpreadsheetId.match(/\\/spreadsheets\\/d\\/([a-zA-Z0-9-_]+)/);
+      if (idMatch && idMatch[1]) {
+        targetSpreadsheetId = idMatch[1];
+      }
+    }
+
+    // 2. Dynamically prioritize targetSpreadsheetId so the webhook updates the intended sheet (uncurl:health or Nefuza)!
     var ss;
-    try {
-      ss = SpreadsheetApp.getActiveSpreadsheet();
-    } catch (e) {}
-
-    if (!ss && targetSpreadsheetId) {
+    if (targetSpreadsheetId) {
       try {
         ss = SpreadsheetApp.openById(targetSpreadsheetId);
       } catch (openErr) {
-        // ignore
+        // Fallback to active container spreadsheet if openById fails
       }
+    }
+
+    if (!ss) {
+      try {
+        ss = SpreadsheetApp.getActiveSpreadsheet();
+      } catch (activeErr) {}
     }
 
     if (!ss) {
       return ContentService.createTextOutput(JSON.stringify({
         success: false,
-        message: 'Could not open Google Spreadsheet. Please verify permissions.'
+        message: 'Could not open Google Spreadsheet (Target ID: ' + (targetSpreadsheetId || 'None') + '). Please verify permissions.'
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -257,8 +289,9 @@ function doPost(e) {
 
     return ContentService.createTextOutput(JSON.stringify({
       success: true,
-      message: 'Tab "' + sheetName + '" successfully added to Google Sheet!',
+      message: 'Tab "' + sheetName + '" successfully added to Google Sheet ("' + ss.getName() + '")!',
       sheetName: sheetName,
+      spreadsheetName: ss.getName(),
       tasksCount: numRows
     })).setMimeType(ContentService.MimeType.JSON);
 
@@ -302,6 +335,12 @@ export const syncTasksToGoogleSheet = async ({
   const cleanWebhook = webhookUrl.trim();
   if (!cleanWebhook) {
     throw new Error('Please provide your Google Apps Script Webhook URL.');
+  }
+
+  if (cleanWebhook.includes('docs.google.com/spreadsheets')) {
+    throw new Error(
+      'You entered a Google Sheet URL instead of an Apps Script Webhook URL. Please paste your deployed Web App URL (starts with https://script.google.com/macros/s/.../exec).'
+    );
   }
 
   // 1. Build Header row & identify Spent Hours column index (1-based)
@@ -374,8 +413,10 @@ export const syncTasksToGoogleSheet = async ({
     return row;
   });
 
+  const targetSpreadsheetId = extractSpreadsheetId(spreadsheetId || '');
+
   const payload = {
-    spreadsheetId: spreadsheetId || TARGET_GOOGLE_SHEET_ID,
+    spreadsheetId: targetSpreadsheetId,
     sheetName: sheetName.trim() || 'Timesheet',
     headers,
     rows,
