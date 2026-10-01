@@ -98,6 +98,19 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
   const [startDate, setStartDate] = useState(initialStartDate);
   const [endDate, setEndDate] = useState(initialEndDate);
 
+  // Sorting: 'asc' (Oldest first / Chronological) or 'desc' (Newest first)
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Option to include time in exported dates (e.g. YYYY-MM-DD vs YYYY-MM-DD HH:mm:ss)
+  const [includeTime, setIncludeTime] = useState<boolean>(() => {
+    return localStorage.getItem('export_include_time') === 'true';
+  });
+
+  const handleToggleIncludeTime = (checked: boolean) => {
+    setIncludeTime(checked);
+    localStorage.setItem('export_include_time', String(checked));
+  };
+
   // File format and naming (e.g. September-nefuza-timesheet)
   const [fileFormat, setFileFormat] = useState<'xlsx' | 'csv'>('xlsx');
   const [userFileName, setUserFileName] = useState<string | null>(null);
@@ -187,9 +200,9 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
     }
   };
 
-  // Filter tasks based on dialog date settings
+  // Filter tasks based on dialog date settings and sort chronologically
   const filteredTasksForExport = useMemo(() => {
-    return workItems.filter((item) => {
+    const filtered = workItems.filter((item) => {
       const dateStr =
         dateField === 'changedDate'
           ? item.fields['System.ChangedDate']
@@ -213,7 +226,18 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
 
       return true;
     });
-  }, [workItems, dateField, startDate, endDate]);
+
+    return [...filtered].sort((a, b) => {
+      const primaryKey = dateField === 'createdDate' ? 'System.CreatedDate' : 'System.ChangedDate';
+      const fallbackKey = dateField === 'createdDate' ? 'System.ChangedDate' : 'System.CreatedDate';
+      const dateA = a.fields[primaryKey] || a.fields[fallbackKey] || '';
+      const dateB = b.fields[primaryKey] || b.fields[fallbackKey] || '';
+      const timeA = dateA ? new Date(dateA).getTime() : 0;
+      const timeB = dateB ? new Date(dateB).getTime() : 0;
+      const diff = timeA - timeB;
+      return sortOrder === 'desc' ? -diff : diff;
+    });
+  }, [workItems, dateField, startDate, endDate, sortOrder]);
 
   // Calculate sum of known spent hours across filtered tasks
   const totalKnownSpentHours = useMemo(() => {
@@ -260,7 +284,10 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
         },
         fileName: finalExportName,
         sheetName: finalExportName,
-        format: fileFormat
+        format: fileFormat,
+        includeTime,
+        sortOrder,
+        dateField
       });
       enqueueSnackbar(`Successfully downloaded "${finalExportName}.${fileFormat}" (${filteredTasksForExport.length} tasks)!`, { variant: 'success' });
       onClose();
@@ -300,7 +327,10 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
           ...columns,
           spentHours: true
         },
-        spreadsheetId: effectiveSpreadsheetId
+        spreadsheetId: effectiveSpreadsheetId,
+        includeTime,
+        sortOrder,
+        dateField
       });
 
       if (res.success) {
@@ -569,7 +599,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
               <Box
                 sx={{
                   display: 'grid',
-                  gridTemplateColumns: { xs: '1fr', sm: '1.2fr 1fr 1fr' },
+                  gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1.2fr 1fr 1fr 1.2fr' },
                   gap: 2,
                   p: 2,
                   borderRadius: 2.5,
@@ -609,6 +639,52 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                   onChange={(e) => setEndDate(e.target.value)}
                   slotProps={{ inputLabel: { shrink: true } }}
                 />
+
+                {/* Date Sort Order */}
+                <TextField
+                  select
+                  size="small"
+                  label="Date Sorting"
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value as 'asc' | 'desc')}
+                >
+                  <MenuItem value="asc">Earliest First (01 to 30)</MenuItem>
+                  <MenuItem value="desc">Latest First (30 to 01)</MenuItem>
+                </TextField>
+              </Box>
+
+              {/* Include Time Toggle Banner */}
+              <Box
+                sx={{
+                  mt: 1.5,
+                  p: 1.2,
+                  px: 1.8,
+                  borderRadius: 2,
+                  bgcolor: 'action.hover',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: 1
+                }}
+              >
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={includeTime}
+                      onChange={(e) => handleToggleIncludeTime(e.target.checked)}
+                      size="small"
+                    />
+                  }
+                  label={
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                      Show Time in Dates ({includeTime ? 'YYYY-MM-DD HH:mm:ss' : 'Only YYYY-MM-DD'})
+                    </Typography>
+                  }
+                />
+                <Typography variant="caption" color="text.secondary">
+                  {includeTime ? 'Full timestamp enabled' : 'Clean dates without time (recommended)'}
+                </Typography>
               </Box>
             </Box>
 
@@ -830,6 +906,93 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
               </Box>
             </Paper>
 
+            {/* Sheet Data & Date Settings */}
+            <Paper variant="outlined" sx={{ p: 2, mb: 2.5, borderRadius: 2.5, bgcolor: 'background.paper' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5, flexWrap: 'wrap', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <DateRangeIcon sx={{ color: '#00b4d8', fontSize: 18 }} />
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+                    Date Range & Sorting Settings
+                  </Typography>
+                </Box>
+                <Chip
+                  label={`${filteredTasksForExport.length} Tasks Ready`}
+                  size="small"
+                  color="info"
+                  sx={{ fontWeight: 700, fontSize: '0.72rem' }}
+                />
+              </Box>
+
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: '1.2fr 1fr 1fr 1.2fr' },
+                  gap: 1.5,
+                  mb: 1.5
+                }}
+              >
+                <TextField
+                  select
+                  size="small"
+                  label="Filter By Date Field"
+                  value={dateField}
+                  onChange={(e) => setDateField(e.target.value as 'changedDate' | 'createdDate')}
+                >
+                  <MenuItem value="changedDate">Updated Date</MenuItem>
+                  <MenuItem value="createdDate">Created Date</MenuItem>
+                </TextField>
+
+                <TextField
+                  label="From Date"
+                  type="date"
+                  size="small"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+
+                <TextField
+                  label="To Date"
+                  type="date"
+                  size="small"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+
+                <TextField
+                  select
+                  size="small"
+                  label="Date Sorting"
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(e.target.value as 'asc' | 'desc')}
+                >
+                  <MenuItem value="asc">Earliest First (01 to 30)</MenuItem>
+                  <MenuItem value="desc">Latest First (30 to 01)</MenuItem>
+                </TextField>
+              </Box>
+
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={includeTime}
+                      onChange={(e) => handleToggleIncludeTime(e.target.checked)}
+                      size="small"
+                    />
+                  }
+                  label={
+                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                      Show Time in Dates ({includeTime ? 'YYYY-MM-DD HH:mm:ss' : 'Only YYYY-MM-DD'})
+                    </Typography>
+                  }
+                />
+                <Typography variant="caption" color="text.secondary">
+                  {includeTime ? 'Full timestamp enabled' : 'Clean dates without time (recommended)'}
+                </Typography>
+              </Box>
+            </Paper>
+
             {/* Target Google Sheet URL Input */}
             <Box sx={{ mb: 2.5 }}>
               <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.8 }}>
@@ -982,8 +1145,8 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                       const taskId = item.id;
                       const taskTitle = fields['System.Title'] || '';
                       const taskDesc = stripHtmlToPlainText(fields['System.Description']) || '-';
-                      const updatedDate = formatExportDate(fields['System.ChangedDate']);
-                      const createdDate = formatExportDate(fields['System.CreatedDate']);
+                      const updatedDate = formatExportDate(fields['System.ChangedDate'], includeTime);
+                      const createdDate = formatExportDate(fields['System.CreatedDate'], includeTime);
                       const state = fields['System.State'] || '';
                       const sprint = fields['System.IterationPath']?.split('\\').pop() || 'Nefuza';
 

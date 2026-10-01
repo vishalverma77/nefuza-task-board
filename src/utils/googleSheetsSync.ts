@@ -314,6 +314,9 @@ interface SyncGoogleSheetParams {
   workItems: WorkItem[];
   columns: ExportColumnOptions;
   spreadsheetId?: string;
+  includeTime?: boolean;
+  sortOrder?: 'asc' | 'desc';
+  dateField?: 'changedDate' | 'createdDate';
 }
 
 export interface SyncGoogleSheetResult {
@@ -331,6 +334,9 @@ export const syncTasksToGoogleSheet = async ({
   workItems,
   columns,
   spreadsheetId,
+  includeTime = false,
+  sortOrder = 'asc',
+  dateField = 'changedDate',
 }: SyncGoogleSheetParams): Promise<SyncGoogleSheetResult> => {
   const cleanWebhook = webhookUrl.trim();
   if (!cleanWebhook) {
@@ -364,8 +370,20 @@ export const syncTasksToGoogleSheet = async ({
   if (columns.sprint) headers.push('Sprint / Iteration');
   if (columns.tags) headers.push('Tags');
 
+  // Ensure tasks are sorted chronologically by date
+  const sortedWorkItems = [...workItems].sort((a, b) => {
+    const primaryKey = dateField === 'createdDate' ? 'System.CreatedDate' : 'System.ChangedDate';
+    const fallbackKey = dateField === 'createdDate' ? 'System.ChangedDate' : 'System.CreatedDate';
+    const dateA = a.fields[primaryKey] || a.fields[fallbackKey] || '';
+    const dateB = b.fields[primaryKey] || b.fields[fallbackKey] || '';
+    const timeA = dateA ? new Date(dateA).getTime() : 0;
+    const timeB = dateB ? new Date(dateB).getTime() : 0;
+    const diff = timeA - timeB;
+    return sortOrder === 'desc' ? -diff : diff;
+  });
+
   // 2. Build Rows
-  const rows: Array<Array<string | number>> = workItems.map((item) => {
+  const rows: Array<Array<string | number>> = sortedWorkItems.map((item) => {
     const fields = item.fields;
     const row: Array<string | number> = [];
 
@@ -401,8 +419,8 @@ export const syncTasksToGoogleSheet = async ({
     const spentHoursVal = fields['Custom.SpentHours'] ?? fields['Microsoft.VSTS.Scheduling.CompletedWork'];
     row.push(spentHoursVal !== undefined && spentHoursVal !== null && spentHoursVal !== '' ? Number(spentHoursVal) : '');
 
-    if (columns.updatedDate) row.push(formatExportDate(fields['System.ChangedDate']));
-    if (columns.createdDate) row.push(formatExportDate(fields['System.CreatedDate']));
+    if (columns.updatedDate) row.push(formatExportDate(fields['System.ChangedDate'], includeTime));
+    if (columns.createdDate) row.push(formatExportDate(fields['System.CreatedDate'], includeTime));
     if (columns.state) row.push(fields['System.State'] || '');
     if (columns.type) row.push(fields['System.WorkItemType'] || '');
     if (columns.assignedTo) row.push(assignedName);

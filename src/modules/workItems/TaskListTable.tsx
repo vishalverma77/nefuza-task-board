@@ -10,6 +10,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableFooter,
   TablePagination,
   TextField,
   MenuItem,
@@ -43,6 +44,7 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import WhatshotIcon from '@mui/icons-material/Whatshot';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import DateRangeIcon from '@mui/icons-material/DateRange';
+import CalculateIcon from '@mui/icons-material/Calculate';
 import ClearIcon from '@mui/icons-material/Clear';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
@@ -522,6 +524,15 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
   };
 
   const hasActiveDateFilter = !!startDate || !!endDate;
+
+  // Calculate sum of spent hours for filtered tasks
+  const totalFilteredSpentHours = useMemo(() => {
+    return filteredWorkItems.reduce((acc, item) => {
+      const v = item.fields['Custom.SpentHours'] ?? item.fields['Microsoft.VSTS.Scheduling.CompletedWork'];
+      const num = typeof v === 'number' ? v : Number(v);
+      return acc + (!isNaN(num) && num > 0 ? num : 0);
+    }, 0);
+  }, [filteredWorkItems]);
 
   return (
     <Card sx={{ borderRadius: 4, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
@@ -1087,6 +1098,49 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
             })}
           </Box>
         )}
+
+        {/* Mobile Filter Total Summary Box (shown when date range filter is active) */}
+        {hasActiveDateFilter && filteredWorkItems.length > 0 && (
+          <Paper
+            variant="outlined"
+            sx={{
+              mt: 2,
+              p: 1.5,
+              borderRadius: 2.5,
+              bgcolor: 'rgba(0, 180, 216, 0.08)',
+              border: '1px solid rgba(0, 180, 216, 0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 1
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <CalculateIcon sx={{ fontSize: 20, color: '#00b4d8' }} />
+              <Typography variant="body2" sx={{ fontWeight: 800 }}>
+                Date Filter Total ({filteredWorkItems.length} {filteredWorkItems.length === 1 ? 'task' : 'tasks'}):
+              </Typography>
+            </Box>
+            <Box
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 0.5,
+                px: 1.2,
+                py: 0.4,
+                bgcolor: '#fef9c3',
+                color: '#854d0e',
+                borderRadius: 1.5,
+                border: '1px solid #fde047',
+                fontWeight: 900,
+                fontSize: '0.85rem'
+              }}
+            >
+              <AccessTimeIcon sx={{ fontSize: 14, color: '#ca8a04' }} />
+              =SUM: {totalFilteredSpentHours.toFixed(2)} hrs
+            </Box>
+          </Paper>
+        )}
       </Box>
 
       {/* Desktop/Tablet Table Content */}
@@ -1412,6 +1466,52 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
               })
             )}
           </TableBody>
+
+          {/* Table Footer with Filtered Date Range Sum (displayed under Spent Hours column) */}
+          {hasActiveDateFilter && filteredWorkItems.length > 0 && (
+            <TableFooter
+              sx={{
+                bgcolor: (theme) =>
+                  theme.palette.mode === 'dark' ? 'rgba(0, 180, 216, 0.12)' : 'rgba(0, 180, 216, 0.08)',
+                borderTop: '2px solid',
+                borderColor: '#00b4d8',
+              }}
+            >
+              <TableRow sx={{ height: 42 }}>
+                <TableCell colSpan={5} sx={{ fontWeight: 800, py: 1, px: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CalculateIcon sx={{ fontSize: 18, color: '#00b4d8' }} />
+                    <Typography variant="body2" sx={{ fontWeight: 800, color: '#0077b6' }}>
+                      Date Filter Total ({filteredWorkItems.length} {filteredWorkItems.length === 1 ? 'task' : 'tasks'}):
+                    </Typography>
+                  </Box>
+                </TableCell>
+                <TableCell sx={{ textAlign: 'right', py: 1, px: 2 }}>
+                  <Box
+                    sx={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'flex-end',
+                      gap: 0.6,
+                      px: 1.2,
+                      py: 0.4,
+                      bgcolor: '#fef9c3',
+                      color: '#854d0e',
+                      borderRadius: 1.5,
+                      border: '1px solid #fde047',
+                      fontWeight: 900,
+                      fontSize: '0.82rem',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    <AccessTimeIcon sx={{ fontSize: 14, color: '#ca8a04' }} />
+                    =SUM: {totalFilteredSpentHours.toFixed(2)} hrs
+                  </Box>
+                </TableCell>
+                <TableCell colSpan={5} sx={{ py: 1 }} />
+              </TableRow>
+            </TableFooter>
+          )}
         </Table>
       </TableContainer>
 

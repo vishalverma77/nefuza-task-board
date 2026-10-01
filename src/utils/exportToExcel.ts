@@ -46,9 +46,9 @@ export const stripHtmlToPlainText = (html?: unknown): string => {
 };
 
 /**
- * Format ISO date string into readable YYYY-MM-DD HH:mm:ss format
+ * Format ISO date string into readable YYYY-MM-DD or YYYY-MM-DD HH:mm:ss format
  */
-export const formatExportDate = (dateStr?: string): string => {
+export const formatExportDate = (dateStr?: string, includeTime: boolean = false): string => {
   if (!dateStr) return '';
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return dateStr;
@@ -57,6 +57,11 @@ export const formatExportDate = (dateStr?: string): string => {
   const year = d.getFullYear();
   const month = pad(d.getMonth() + 1);
   const day = pad(d.getDate());
+
+  if (!includeTime) {
+    return `${year}-${month}-${day}`;
+  }
+
   const hours = pad(d.getHours());
   const minutes = pad(d.getMinutes());
   const seconds = pad(d.getSeconds());
@@ -142,6 +147,9 @@ interface ExportParams {
   fileName?: string;
   sheetName?: string;
   format?: 'xlsx' | 'csv';
+  includeTime?: boolean;
+  sortOrder?: 'asc' | 'desc';
+  dateField?: 'changedDate' | 'createdDate';
 }
 
 /**
@@ -169,6 +177,9 @@ export const exportTasksToFile = async ({
   fileName,
   sheetName,
   format = 'xlsx',
+  includeTime = false,
+  sortOrder = 'asc',
+  dateField = 'changedDate',
 }: ExportParams): Promise<void> => {
   const defaultName = getTimesheetNameFromDates();
   const effectiveFileName = fileName?.trim() || defaultName;
@@ -280,8 +291,20 @@ export const exportTasksToFile = async ({
     right: { style: 'thin', color: { argb: 'FFE2E8F0' } },
   };
 
+  // Ensure data rows are sorted chronologically by date
+  const sortedWorkItems = [...workItems].sort((a, b) => {
+    const primaryKey = dateField === 'createdDate' ? 'System.CreatedDate' : 'System.ChangedDate';
+    const fallbackKey = dateField === 'createdDate' ? 'System.ChangedDate' : 'System.CreatedDate';
+    const dateA = a.fields[primaryKey] || a.fields[fallbackKey] || '';
+    const dateB = b.fields[primaryKey] || b.fields[fallbackKey] || '';
+    const timeA = dateA ? new Date(dateA).getTime() : 0;
+    const timeB = dateB ? new Date(dateB).getTime() : 0;
+    const diff = timeA - timeB;
+    return sortOrder === 'desc' ? -diff : diff;
+  });
+
   // Add Data Rows
-  workItems.forEach((item, index) => {
+  sortedWorkItems.forEach((item, index) => {
     const fields = item.fields;
 
     let assignedName = 'Unassigned';
@@ -320,8 +343,8 @@ export const exportTasksToFile = async ({
         ? Number(spentHoursVal)
         : null;
     }
-    if (cols.updatedDate) rowData.updatedDate = formatExportDate(fields['System.ChangedDate']);
-    if (cols.createdDate) rowData.createdDate = formatExportDate(fields['System.CreatedDate']);
+    if (cols.updatedDate) rowData.updatedDate = formatExportDate(fields['System.ChangedDate'], includeTime);
+    if (cols.createdDate) rowData.createdDate = formatExportDate(fields['System.CreatedDate'], includeTime);
     if (cols.state) rowData.state = fields['System.State'] || '';
     if (cols.type) rowData.type = fields['System.WorkItemType'] || '';
     if (cols.assignedTo) rowData.assignedTo = assignedName;
