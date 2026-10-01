@@ -9,7 +9,7 @@ export const NEFUZA_GOOGLE_SHEET_URL =
 
 export const UNCURL_GOOGLE_SHEET_ID = '1M5MrdIIpSVDYe77m9sbxbD1_QXiAw8qLgrpWcsCnjUo';
 export const UNCURL_GOOGLE_SHEET_URL =
-  'https://docs.google.com/spreadsheets/d/1M5MrdIIpSVDYe77m9sbxbD1_QXiAw8qLgrpWcsCnjUo/edit?gid=0#gid=0';
+  'https://docs.google.com/spreadsheets/d/1M5MrdIIpSVDYe77m9sbxbD1_QXiAw8qLgrpWcsCnjUo/edit?gid=1581857269#gid=1581857269';
 
 export const TARGET_GOOGLE_SHEET_ID = NEFUZA_GOOGLE_SHEET_ID;
 

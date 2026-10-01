@@ -57,7 +57,8 @@ import {
 import {
   syncTasksToGoogleSheet,
   getOrgGoogleSheetDetails,
-  getGoogleAppsScriptCode
+  getGoogleAppsScriptCode,
+  extractSpreadsheetId
 } from '../../utils/googleSheetsSync';
 import { formatApiError } from '../../utils/errorUtils';
 
@@ -106,15 +107,30 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
   const activeOrg = useSelector((state: RootState) => state.connection.activeOrg);
   const orgSheet = useMemo(() => getOrgGoogleSheetDetails(activeOrg), [activeOrg]);
 
+  const sheetUrlStorageKey = useMemo(() => {
+    return activeOrg === 'uncurl:health' ? 'uncurl_custom_sheet_url' : 'nefuza_custom_sheet_url';
+  }, [activeOrg]);
+
+  // Google Sheet URL state (dynamic per organization)
+  const [customSheetUrl, setCustomSheetUrl] = useState(() => {
+    return localStorage.getItem(sheetUrlStorageKey) || orgSheet.sheetUrl;
+  });
+
   // Google Sheets Cloud Sync state (separated per organization)
   const [webhookUrl, setWebhookUrl] = useState(() => {
     return localStorage.getItem(orgSheet.storageKey) || '';
   });
 
-  // Re-sync webhook URL if active organization changes
+  // Re-sync sheet URL and webhook URL if active organization changes
   useEffect(() => {
+    setCustomSheetUrl(localStorage.getItem(sheetUrlStorageKey) || orgSheet.sheetUrl);
     setWebhookUrl(localStorage.getItem(orgSheet.storageKey) || '');
-  }, [orgSheet.storageKey]);
+  }, [orgSheet.storageKey, sheetUrlStorageKey, orgSheet.sheetUrl]);
+
+  const targetSheetUrl = customSheetUrl.trim() || orgSheet.sheetUrl;
+  const effectiveSpreadsheetId = useMemo(() => {
+    return extractSpreadsheetId(targetSheetUrl) || orgSheet.spreadsheetId;
+  }, [targetSheetUrl, orgSheet.spreadsheetId]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<{
     type: 'success' | 'error';
@@ -284,7 +300,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
           ...columns,
           spentHours: true
         },
-        spreadsheetId: orgSheet.spreadsheetId
+        spreadsheetId: effectiveSpreadsheetId
       });
 
       if (res.success) {
@@ -293,7 +309,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
         onSuccess?.({
           title: `${orgSheet.orgLabel} Sheet Synced Successfully!`,
           message: `New sheet tab "${finalSheetName}" with ${filteredTasksForExport.length} tasks has been successfully added into your ${orgSheet.orgLabel} Google Sheet!`,
-          actionUrl: orgSheet.sheetUrl,
+          actionUrl: targetSheetUrl,
           actionLabel: `Open ${orgSheet.orgLabel} Sheet`
         });
       } else {
@@ -316,7 +332,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
   };
 
   const handleCopyScript = () => {
-    const script = getGoogleAppsScriptCode(orgSheet.spreadsheetId, orgSheet.orgLabel);
+    const script = getGoogleAppsScriptCode(effectiveSpreadsheetId, orgSheet.orgLabel);
     navigator.clipboard.writeText(script);
     setCopiedScript(true);
     enqueueSnackbar('Google Apps Script code copied to clipboard!', { variant: 'info' });
@@ -765,7 +781,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                     <Button
                       color="inherit"
                       size="small"
-                      href={orgSheet.sheetUrl}
+                      href={targetSheetUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       endIcon={<OpenInNewIcon fontSize="inherit" />}
@@ -784,7 +800,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
               variant="outlined"
               sx={{
                 p: 2,
-                mb: 3,
+                mb: 2.5,
                 borderRadius: 2.5,
                 bgcolor: 'rgba(53, 104, 84, 0.08)',
                 border: '1px solid rgba(53, 104, 84, 0.3)'
@@ -803,7 +819,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                 <Button
                   size="small"
                   variant="outlined"
-                  href={orgSheet.sheetUrl}
+                  href={targetSheetUrl}
                   target="_blank"
                   rel="noopener noreferrer"
                   endIcon={<OpenInNewIcon fontSize="small" />}
@@ -814,9 +830,28 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
               </Box>
             </Paper>
 
+            {/* Target Google Sheet URL Input */}
+            <Box sx={{ mb: 2.5 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.8 }}>
+                {orgSheet.orgLabel} Google Sheet URL
+              </Typography>
+              <TextField
+                fullWidth
+                size="small"
+                placeholder="https://docs.google.com/spreadsheets/d/.../edit"
+                value={customSheetUrl}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setCustomSheetUrl(val);
+                  localStorage.setItem(sheetUrlStorageKey, val.trim());
+                }}
+                helperText={`Target spreadsheet file link. Click "Open ${orgSheet.orgLabel} Sheet" above to view it.`}
+              />
+            </Box>
+
             {/* Webhook URL Input */}
             <Box sx={{ mb: 3 }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.8 }}>
                 {orgSheet.orgLabel} Apps Script Webhook URL
               </Typography>
               <TextField
@@ -825,8 +860,16 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                 placeholder="https://script.google.com/macros/s/.../exec"
                 value={webhookUrl}
                 onChange={(e) => {
-                  setWebhookUrl(e.target.value);
-                  localStorage.setItem(orgSheet.storageKey, e.target.value.trim());
+                  const val = e.target.value;
+                  const trimmed = val.trim();
+                  if (trimmed.includes('docs.google.com/spreadsheets')) {
+                    setCustomSheetUrl(trimmed);
+                    localStorage.setItem(sheetUrlStorageKey, trimmed);
+                    enqueueSnackbar('Google Sheet URL updated from input!', { variant: 'info' });
+                    return;
+                  }
+                  setWebhookUrl(val);
+                  localStorage.setItem(orgSheet.storageKey, trimmed);
                 }}
                 helperText={`Paste your deployed Google Apps Script Web App URL for ${orgSheet.orgLabel}. It is saved automatically in your browser.`}
               />
@@ -855,7 +898,7 @@ export const ExportTasksDialog: React.FC<ExportTasksDialogProps> = ({
                   <li>
                     Open your {orgSheet.orgLabel}{' '}
                     <a
-                      href={orgSheet.sheetUrl}
+                      href={targetSheetUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       style={{ color: '#00b4d8', fontWeight: 700 }}
