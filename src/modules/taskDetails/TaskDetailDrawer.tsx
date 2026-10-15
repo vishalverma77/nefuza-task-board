@@ -33,6 +33,7 @@ import { fetchUncurlCardHours, normalizeDescription, findTasqueeCardForTask, DEF
 import { SafeHtmlViewer } from '../../components/common/SafeHtmlViewer';
 import { LogHoursDialog } from './LogHoursDialog';
 import { TasqueeAuthDialog } from '../tasqueeAuth/TasqueeAuthDialog';
+import { updateManualTask } from '../../services/manualTasksStorage';
 import type { AzureIdentity, WorkItem } from '../../types/azureDevOps';
 
 export const TaskDetailDrawer: React.FC = () => {
@@ -90,7 +91,7 @@ export const TaskDetailDrawer: React.FC = () => {
   const { data: historyUpdates, isLoading: loadingHistory } = useQuery({
     queryKey: ['workItemHistory', config?.organization, config?.project, workItemId],
     queryFn: () => (config && workItemId ? fetchWorkItemHistory(config, workItemId) : Promise.resolve([])),
-    enabled: !!config && !!workItemId && drawerOpen && activeOrg === 'safbsdev',
+    enabled: !!config && !!workItemId && drawerOpen && activeOrg === 'safbsdev' && !selectedWorkItem?.fields['Custom.IsManual'],
   });
 
   // Fetch Card Hours / Time Tracking Logs from Supabase card_hours (works for both Nefuza and Uncurl)
@@ -243,15 +244,18 @@ export const TaskDetailDrawer: React.FC = () => {
   const createdBy = resolveIdentity(fields['System.CreatedBy']);
 
   // External Link URL (Azure DevOps or Tasquee)
+  const isManual = Boolean(selectedWorkItem.fields['Custom.IsManual']);
   const externalUrl =
-    activeOrg === 'uncurl:health'
-      ? `https://tasquee.syncglob.com/board/2a709fe2-47f7-4f9a-8d85-1a612711dfde?card=${encodeURIComponent(cardUuid)}`
+    activeOrg === 'uncurl:health' || isManual
+      ? (effectiveCardUuid
+          ? `https://tasquee.syncglob.com/board/2a709fe2-47f7-4f9a-8d85-1a612711dfde?card=${encodeURIComponent(effectiveCardUuid)}`
+          : 'https://tasquee.syncglob.com/board/2a709fe2-47f7-4f9a-8d85-1a612711dfde')
       : selectedWorkItem.url ||
         (config
           ? `https://dev.azure.com/${encodeURIComponent(config.organization)}/${encodeURIComponent(config.project)}/_workitems/edit/${selectedWorkItem.id}`
           : '#');
 
-  const externalLabel = activeOrg === 'uncurl:health' ? 'Open in Tasquee' : 'Open in Azure DevOps';
+  const externalLabel = activeOrg === 'uncurl:health' || isManual ? 'Open in Tasquee' : 'Open in Azure DevOps';
 
   return (
     <Drawer
@@ -287,6 +291,19 @@ export const TaskDetailDrawer: React.FC = () => {
               sx={{ fontWeight: 800, bgcolor: '#00b4d8', color: '#fff', borderRadius: 2 }}
               size="small"
             />
+            {isManual && (
+              <Chip
+                label="Manual"
+                size="small"
+                sx={{
+                  fontWeight: 800,
+                  bgcolor: 'rgba(139, 92, 246, 0.12)',
+                  color: '#8b5cf6',
+                  border: '1px solid rgba(139, 92, 246, 0.3)',
+                  borderRadius: 2,
+                }}
+              />
+            )}
             <Chip label={type} variant="outlined" size="small" sx={{ fontWeight: 700, borderRadius: 2 }} />
             <Chip label={state} size="small" color="info" sx={{ fontWeight: 700, borderRadius: 2 }} />
             {totalSpentHours > 0 && (
@@ -790,7 +807,19 @@ export const TaskDetailDrawer: React.FC = () => {
         {/* Tab 3: History & Revision Updates (Azure) */}
         {activeTab === 3 && activeOrg === 'safbsdev' && (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {loadingHistory ? (
+            {isManual ? (
+              <Paper variant="outlined" sx={{ p: 3, textAlign: 'center', borderRadius: 3, borderStyle: 'dashed' }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+                  Manual Nefuza Work Item
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  This work item was created manually on your Nefuza board.
+                  <br />
+                  Created: {createdDate}
+                  {changedDate && changedDate !== createdDate && ` • Last Updated: ${changedDate}`}
+                </Typography>
+              </Paper>
+            ) : loadingHistory ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
                 <CircularProgress />
               </Box>
@@ -857,6 +886,14 @@ export const TaskDetailDrawer: React.FC = () => {
           refetchHours();
           if (selectedWorkItem) {
             dispatch(updateWorkItemSpentHours({ cardId: selectedWorkItem.id, spentHours: newTotal }));
+
+            if (selectedWorkItem.fields['Custom.IsManual']) {
+              updateManualTask(selectedWorkItem.id, {
+                'Custom.SpentHours': newTotal,
+                'Microsoft.VSTS.Scheduling.CompletedWork': newTotal,
+              });
+            }
+
             queryClient.setQueriesData({ queryKey: ['workItems'] }, (oldData: WorkItem[] | undefined) => {
               if (!oldData || !Array.isArray(oldData)) return oldData;
               return oldData.map((item) => {

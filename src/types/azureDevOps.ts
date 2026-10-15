@@ -47,6 +47,10 @@ export interface WorkItemFields {
   'System.IterationPath'?: string;
   'System.Tags'?: string;
   'System.CommentCount'?: number;
+  'Custom.IsManual'?: boolean;
+  'Custom.SpentHours'?: number;
+  'Custom.CardId'?: string;
+  'Custom.AddedToTasquee'?: boolean;
   [key: string]: unknown;
 }
 

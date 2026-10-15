@@ -10,6 +10,8 @@ import { TaskListTable } from '../workItems/TaskListTable';
 import { TaskDetailDrawer } from '../taskDetails/TaskDetailDrawer';
 import { fetchWorkItems } from '../../services/azureDevOpsApi';
 import { fetchUncurlWorkItems, syncTasqueeHoursForNefuzaTasks } from '../../services/uncurlApi';
+import { mergeWithManualTasks, getManualTasks } from '../../services/manualTasksStorage';
+import type { WorkItem } from '../../types/azureDevOps';
 
 export const DashboardView: React.FC = () => {
   const { config, uncurlConfig, activeOrg } = useSelector((state: RootState) => state.connection);
@@ -34,11 +36,25 @@ export const DashboardView: React.FC = () => {
         if (!uncurlConfig || !uncurlConfig.bearerToken) return [];
         return fetchUncurlWorkItems(uncurlConfig);
       }
-      if (!config) return [];
-      const azureItems = await fetchWorkItems(config);
-      return syncTasqueeHoursForNefuzaTasks(azureItems, uncurlConfig);
+      if (!config) {
+        const manual = getManualTasks();
+        return syncTasqueeHoursForNefuzaTasks(manual, uncurlConfig);
+      }
+      let azureItems: WorkItem[] = [];
+      try {
+        azureItems = await fetchWorkItems(config);
+      } catch (err) {
+        console.error('Failed to fetch from Azure DevOps:', err);
+        const manual = getManualTasks();
+        if (manual.length > 0) {
+          return syncTasqueeHoursForNefuzaTasks(manual, uncurlConfig);
+        }
+        throw err;
+      }
+      const combinedItems = mergeWithManualTasks(azureItems);
+      return syncTasqueeHoursForNefuzaTasks(combinedItems, uncurlConfig);
     },
-    enabled: activeOrg === 'uncurl:health' ? Boolean(uncurlConfig?.bearerToken) : Boolean(config),
+    enabled: activeOrg === 'uncurl:health' ? Boolean(uncurlConfig?.bearerToken) : Boolean(config || getManualTasks().length > 0),
   });
 
   return (

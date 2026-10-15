@@ -28,7 +28,12 @@ import {
   Snackbar,
   Alert,
   AlertTitle,
-  CircularProgress
+  CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
@@ -52,6 +57,9 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ViewListIcon from '@mui/icons-material/ViewList';
 import ViewModuleIcon from '@mui/icons-material/ViewModule';
+import PostAddIcon from '@mui/icons-material/PostAdd';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import DeleteIcon from '@mui/icons-material/Delete';
 import type { WorkItem, WorkItemType, AzureIdentity, UncurlConnectionConfig } from '../../types/azureDevOps';
 import type { RootState } from '../../app/store';
 import { selectWorkItem, updateWorkItemSpentHours } from '../azureConnection/connectionSlice';
@@ -59,6 +67,8 @@ import { ExportTasksDialog, type ExportSuccessNotification } from './ExportTasks
 import { SecretWorkspaceDialog } from '../workspaceAuth/SecretWorkspaceDialog';
 import { TasqueeAuthDialog } from '../tasqueeAuth/TasqueeAuthDialog';
 import { LogHoursDialog } from '../taskDetails/LogHoursDialog';
+import { AddManualTaskDialog } from './AddManualTaskDialog';
+import { updateManualTask, deleteManualTask } from '../../services/manualTasksStorage';
 import { createTasqueeCard, fetchTasqueeExistingTaskIds, DEFAULT_UNCURL_CONFIG } from '../../services/uncurlApi';
 import { formatApiError } from '../../utils/errorUtils';
 
@@ -117,6 +127,53 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
   const [tasqueeAuthError, setTasqueeAuthError] = useState<string | null>(null);
   const [isLogHoursOpen, setIsLogHoursOpen] = useState(false);
   const [logHoursTask, setLogHoursTask] = useState<WorkItem | null>(null);
+
+  // Manual Tasks Management State
+  const [isAddManualDialogOpen, setIsAddManualDialogOpen] = useState(false);
+  const [editingManualTask, setEditingManualTask] = useState<WorkItem | null>(null);
+  const [deleteConfirmTask, setDeleteConfirmTask] = useState<WorkItem | null>(null);
+  const [isDeletingTask, setIsDeletingTask] = useState(false);
+
+  const handleOpenAddDialog = () => {
+    setEditingManualTask(null);
+    setIsAddManualDialogOpen(true);
+  };
+
+  const handleOpenEditDialog = (task: WorkItem) => {
+    setEditingManualTask(task);
+    setIsAddManualDialogOpen(true);
+  };
+
+  const handleTaskSaved = (savedItem: WorkItem, _isNew: boolean) => {
+    queryClient.setQueriesData({ queryKey: ['workItems'] }, (oldData: WorkItem[] | undefined) => {
+      if (!oldData || !Array.isArray(oldData)) return [savedItem];
+      const exists = oldData.some((i) => i.id === savedItem.id);
+      if (exists) {
+        return oldData.map((i) => (i.id === savedItem.id ? savedItem : i));
+      }
+      return [savedItem, ...oldData];
+    });
+  };
+
+  const handleDeleteManualTask = () => {
+    if (!deleteConfirmTask) return;
+    const targetId = deleteConfirmTask.id;
+    setIsDeletingTask(true);
+    try {
+      deleteManualTask(targetId);
+      queryClient.setQueriesData({ queryKey: ['workItems'] }, (oldData: WorkItem[] | undefined) => {
+        if (!oldData || !Array.isArray(oldData)) return oldData;
+        return oldData.filter((i) => i.id !== targetId);
+      });
+      enqueueSnackbar(`Manual Task #${targetId} deleted successfully.`, { variant: 'info' });
+      setDeleteConfirmTask(null);
+    } catch (err) {
+      console.error('Failed to delete manual task:', err);
+      enqueueSnackbar('Failed to delete manual task.', { variant: 'error' });
+    } finally {
+      setIsDeletingTask(false);
+    }
+  };
 
   // Sync live cards from Tasquee board GET API so deleted cards automatically re-enable the button
   const syncTasqueeCards = React.useCallback(async (tokenOverride?: string) => {
@@ -210,7 +267,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
 
     setAddingTaskId(item.id);
     try {
-      await createTasqueeCard(
+      const createdCard = await createTasqueeCard(
         {
           column_id: '5466d98a-aebc-4d5d-beb0-f32ad41453db',
           title: formattedTitle,
@@ -224,6 +281,31 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
       // Re-sync live added IDs from Tasquee GET API immediately
       await syncTasqueeCards(token);
       setAddedTasqueeIds((prev) => (prev.includes(item.id) ? prev : [...prev, item.id]));
+
+      // Persist to manual tasks storage if manual item
+      if (item.fields['Custom.IsManual']) {
+        const cardUuid = createdCard?.id ? String(createdCard.id) : undefined;
+        updateManualTask(item.id, {
+          'Custom.CardId': cardUuid,
+          'Custom.AddedToTasquee': true,
+        });
+        queryClient.setQueriesData({ queryKey: ['workItems'] }, (oldData: WorkItem[] | undefined) => {
+          if (!oldData || !Array.isArray(oldData)) return oldData;
+          return oldData.map((it) => {
+            if (it.id === item.id) {
+              return {
+                ...it,
+                fields: {
+                  ...it.fields,
+                  'Custom.CardId': cardUuid,
+                  'Custom.AddedToTasquee': true,
+                },
+              };
+            }
+            return it;
+          });
+        });
+      }
 
       enqueueSnackbar(`"${formattedTitle}" added to Tasquee successfully!`, { variant: 'success' });
       setSuccessNotification({
@@ -704,6 +786,31 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
               Export
             </Button>
 
+            {/* Add Manual Task Button (Nefuza Board) */}
+            {activeOrg === 'safbsdev' && (
+              <Button
+                variant="contained"
+                size="medium"
+                startIcon={<PostAddIcon />}
+                onClick={handleOpenAddDialog}
+                sx={{
+                  bgcolor: '#0284c7',
+                  '&:hover': { bgcolor: '#0369a1' },
+                  fontWeight: 800,
+                  textTransform: 'none',
+                  height: 40,
+                  px: 2,
+                  minWidth: { xs: 'calc(50% - 6px)', sm: 'auto' },
+                  flex: { xs: '1 1 calc(50% - 6px)', sm: 'initial' },
+                  borderRadius: 2,
+                  boxShadow: '0 4px 14px rgba(2, 132, 199, 0.25)',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                + Add Task
+              </Button>
+            )}
+
             {/* View Mode Toggle: Cards vs Table */}
             <Tooltip title={viewMode === 'cards' ? 'Switch to Table View' : (viewMode === 'table' ? 'Switch to Card View' : 'Toggle Card/Table View')}>
               <IconButton
@@ -952,6 +1059,21 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                         size="small"
                         sx={{ fontWeight: 800, bgcolor: 'rgba(0, 180, 216, 0.12)', color: '#0077b6', borderRadius: 1.5, height: 24, fontSize: '0.75rem' }}
                       />
+                      {item.fields['Custom.IsManual'] && (
+                        <Chip
+                          label="Manual"
+                          size="small"
+                          sx={{
+                            height: 22,
+                            fontSize: '0.68rem',
+                            fontWeight: 800,
+                            bgcolor: 'rgba(139, 92, 246, 0.12)',
+                            color: '#8b5cf6',
+                            border: '1px solid rgba(139, 92, 246, 0.3)',
+                            borderRadius: 1.5,
+                          }}
+                        />
+                      )}
                       <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, px: 0.8, py: 0.2, borderRadius: 1.5, bgcolor: 'action.hover' }}>
                         {getWorkItemTypeIcon(type)}
                         <Typography variant="caption" sx={{ fontWeight: 700, fontSize: '0.72rem' }}>{type}</Typography>
@@ -971,7 +1093,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                   {/* Action Badges Row: Tasquee integration & Hours */}
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap', mb: 1.2, pt: 0.5 }}>
                     {/* Tasquee Add Button */}
-                    {activeOrg === 'safbsdev' && item.id > 173 && (
+                    {activeOrg === 'safbsdev' && (item.id > 173 || item.fields['Custom.IsManual']) && (
                       isAddedOnTasquee ? (
                         <Chip
                           size="small"
@@ -1084,10 +1206,34 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                       </Typography>
                     </Box>
 
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6 }}>
                       <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.7rem' }}>
                         {sprint}
                       </Typography>
+                      {item.fields['Custom.IsManual'] && (
+                        <>
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenEditDialog(item);
+                            }}
+                            sx={{ p: 0.25, color: 'text.secondary', '&:hover': { color: '#00b4d8' } }}
+                          >
+                            <EditOutlinedIcon sx={{ fontSize: 16 }} />
+                          </IconButton>
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteConfirmTask(item);
+                            }}
+                            sx={{ p: 0.25, color: '#f43f5e' }}
+                          >
+                            <DeleteIcon sx={{ fontSize: 16 }} />
+                          </IconButton>
+                        </>
+                      )}
                       <IconButton size="small" sx={{ p: 0.25, color: '#00b4d8' }}>
                         <VisibilityIcon sx={{ fontSize: 16 }} />
                       </IconButton>
@@ -1166,7 +1312,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                 Updated {sortBy === 'changedDate' && (sortOrder === 'asc' ? <ArrowUpwardIcon fontSize="inherit" /> : <ArrowDownwardIcon fontSize="inherit" />)}
               </TableCell>
               <TableCell sx={{ fontWeight: 800, width: 100 }}>Sprint</TableCell>
-              <TableCell align="center" sx={{ fontWeight: 800, width: 55 }}>View</TableCell>
+              <TableCell align="center" sx={{ fontWeight: 800, width: 95 }}>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -1246,7 +1392,24 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
                     }}
                   >
                     <TableCell sx={{ fontWeight: 800, color: '#00b4d8', whiteSpace: 'nowrap' }}>
-                      #{item.id}
+                      <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
+                        <span>#{item.id}</span>
+                        {item.fields['Custom.IsManual'] && (
+                          <Chip
+                            label="Manual"
+                            size="small"
+                            sx={{
+                              height: 18,
+                              fontSize: '0.62rem',
+                              fontWeight: 800,
+                              bgcolor: 'rgba(139, 92, 246, 0.12)',
+                              color: '#8b5cf6',
+                              border: '1px solid rgba(139, 92, 246, 0.3)',
+                              borderRadius: 1,
+                            }}
+                          />
+                        )}
+                      </Box>
                     </TableCell>
 
                     {/* Title Cell */}
@@ -1265,7 +1428,7 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
 
                     {/* Dedicated Tasquee Column */}
                     <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                      {activeOrg === 'safbsdev' && item.id > 173 ? (
+                      {activeOrg === 'safbsdev' && (item.id > 173 || item.fields['Custom.IsManual']) ? (
                         isAddedOnTasquee ? (
                           <Chip
                             size="small"
@@ -1448,18 +1611,48 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
 
                     {/* View Action Cell */}
                     <TableCell align="center" sx={{ whiteSpace: 'nowrap' }}>
-                      <Tooltip title="View Details">
-                        <IconButton
-                          size="small"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            dispatch(selectWorkItem(item));
-                          }}
-                          sx={{ color: '#00b4d8' }}
-                        >
-                          <VisibilityIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
+                      <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.25 }}>
+                        {item.fields['Custom.IsManual'] && (
+                          <>
+                            <Tooltip title="Edit Manual Task">
+                              <IconButton
+                                size="small"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenEditDialog(item);
+                                }}
+                                sx={{ color: 'text.secondary', p: 0.5, '&:hover': { color: '#00b4d8' } }}
+                              >
+                                <EditOutlinedIcon sx={{ fontSize: 18 }} />
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Delete Manual Task">
+                              <IconButton
+                                size="small"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteConfirmTask(item);
+                                }}
+                                sx={{ color: 'text.secondary', p: 0.5, '&:hover': { color: '#f43f5e' } }}
+                              >
+                                <DeleteIcon sx={{ fontSize: 18 }} />
+                              </IconButton>
+                            </Tooltip>
+                          </>
+                        )}
+                        <Tooltip title="View Details">
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              dispatch(selectWorkItem(item));
+                            }}
+                            sx={{ color: '#00b4d8', p: 0.5 }}
+                          >
+                            <VisibilityIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Box>
                     </TableCell>
                   </TableRow>
                 );
@@ -1593,6 +1786,14 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
             logHoursTask.fields['Microsoft.VSTS.Scheduling.CompletedWork'] = newTotal;
             dispatch(updateWorkItemSpentHours({ cardId: logHoursTask.id, spentHours: newTotal }));
 
+            // If manual task, persist spent hours to localStorage
+            if (logHoursTask.fields['Custom.IsManual']) {
+              updateManualTask(logHoursTask.id, {
+                'Custom.SpentHours': newTotal,
+                'Microsoft.VSTS.Scheduling.CompletedWork': newTotal,
+              });
+            }
+
             // Update React Query cache so table re-renders with new hours immediately
             queryClient.setQueriesData({ queryKey: ['workItems'] }, (oldData: WorkItem[] | undefined) => {
               if (!oldData || !Array.isArray(oldData)) return oldData;
@@ -1625,6 +1826,57 @@ export const TaskListTable: React.FC<TaskListTableProps> = ({
           setIsTasqueeAuthOpen(true);
         }}
       />
+
+      {/* Add / Edit Manual Task Dialog */}
+      <AddManualTaskDialog
+        open={isAddManualDialogOpen}
+        onClose={() => {
+          setIsAddManualDialogOpen(false);
+          setEditingManualTask(null);
+        }}
+        existingWorkItems={workItems}
+        taskToEdit={editingManualTask}
+        onTaskSaved={handleTaskSaved}
+        uncurlConfig={uncurlConfig}
+        onNeedTasqueeAuth={() => {
+          setIsAddManualDialogOpen(false);
+          setIsTasqueeAuthOpen(true);
+        }}
+      />
+
+      {/* Delete Manual Task Confirmation Dialog */}
+      <Dialog
+        open={Boolean(deleteConfirmTask)}
+        onClose={() => !isDeletingTask && setDeleteConfirmTask(null)}
+        slotProps={{ paper: { sx: { borderRadius: 3, p: 1 } } }}
+      >
+        <DialogTitle sx={{ fontWeight: 800 }}>Delete Manual Task</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to delete manual task <strong>#{deleteConfirmTask?.id}</strong> (&quot;{deleteConfirmTask?.fields['System.Title']}&quot;)?
+            This action will remove it from your Nefuza board.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={() => setDeleteConfirmTask(null)}
+            disabled={isDeletingTask}
+            color="inherit"
+            sx={{ fontWeight: 600 }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleDeleteManualTask}
+            disabled={isDeletingTask}
+            color="error"
+            variant="contained"
+            sx={{ fontWeight: 800, borderRadius: 2 }}
+          >
+            {isDeletingTask ? 'Deleting...' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Export & Google Sheet Sync Success Confirmation Notification */}
       <Snackbar
