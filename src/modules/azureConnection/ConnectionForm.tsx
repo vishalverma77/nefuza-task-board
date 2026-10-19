@@ -33,8 +33,8 @@ import type { AzureConnectionConfig } from '../../types/azureDevOps';
 
 export const ConnectionForm: React.FC = () => {
   const dispatch = useDispatch();
-  const [organization, setOrganization] = useState('');
-  const [project, setProject] = useState('');
+  const [organization, setOrganization] = useState('safbsdev');
+  const [project, setProject] = useState('Nefuza');
   const [pat, setPat] = useState('');
   const [showPat, setShowPat] = useState(false);
   const [loading, setLoading] = useState(false);
