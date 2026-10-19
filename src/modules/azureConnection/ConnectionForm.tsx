@@ -26,19 +26,51 @@ import SpeedIcon from '@mui/icons-material/Speed';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import HelpOutlinedIcon from '@mui/icons-material/HelpOutlined';
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
-import { setConnection } from './connectionSlice';
+import CloudQueueIcon from '@mui/icons-material/CloudQueue';
+import BusinessIcon from '@mui/icons-material/Business';
+import FlashOnIcon from '@mui/icons-material/FlashOn';
+import { setConnection, setUncurlConfig } from './connectionSlice';
 import { validateAzureConnection } from '../../services/azureDevOpsApi';
+import { DEFAULT_UNCURL_CONFIG } from '../../services/uncurlApi';
 import { formatApiError } from '../../utils/errorUtils';
-import type { AzureConnectionConfig } from '../../types/azureDevOps';
+import type { AzureConnectionConfig, UncurlConnectionConfig } from '../../types/azureDevOps';
 
 export const ConnectionForm: React.FC = () => {
   const dispatch = useDispatch();
+  const [activeTab, setActiveTab] = useState<'azure' | 'uncurl'>('azure');
   const [organization, setOrganization] = useState('safbsdev');
   const [project, setProject] = useState('Nefuza');
   const [pat, setPat] = useState('');
   const [showPat, setShowPat] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Uncurl (Tasquee Board) direct login state
+  const [uncurlToken, setUncurlToken] = useState<string>(() => {
+    try {
+      const raw = localStorage.getItem('uncurl_health_session') || sessionStorage.getItem('uncurl_health_session');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return parsed.bearerToken || '';
+      }
+    } catch {
+      // ignore
+    }
+    return '';
+  });
+  const [showUncurlToken, setShowUncurlToken] = useState(false);
+
+  const handleUncurlLogin = (tokenOverride?: string) => {
+    setError(null);
+    const token = tokenOverride !== undefined ? tokenOverride.trim() : uncurlToken.trim();
+    const config: UncurlConnectionConfig = {
+      organization: 'uncurl:health',
+      requestUrl: DEFAULT_UNCURL_CONFIG.requestUrl,
+      apiKey: DEFAULT_UNCURL_CONFIG.apiKey,
+      bearerToken: token,
+    };
+    dispatch(setUncurlConfig(config));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -292,8 +324,64 @@ export const ConnectionForm: React.FC = () => {
                 Connect Workspace
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ mt: 0.2, display: 'block', fontSize: '0.75rem' }}>
-                Enter your Azure DevOps details below
+                {activeTab === 'azure'
+                  ? 'Enter your Azure DevOps details below'
+                  : 'Direct access to uncurl:health board (No Azure PAT Required)'}
               </Typography>
+            </Box>
+
+            {/* Board Workspace Selector Tabs */}
+            <Box
+              sx={{
+                display: 'flex',
+                p: 0.5,
+                bgcolor: (theme) => (theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)'),
+                borderRadius: 2.5,
+                mb: 2.2,
+                border: '1px solid',
+                borderColor: 'divider',
+              }}
+            >
+              <Button
+                onClick={() => setActiveTab('azure')}
+                size="small"
+                fullWidth
+                startIcon={<CloudQueueIcon sx={{ fontSize: 17 }} />}
+                sx={{
+                  borderRadius: 2,
+                  py: 0.7,
+                  fontSize: '0.78rem',
+                  fontWeight: activeTab === 'azure' ? 750 : 550,
+                  bgcolor: activeTab === 'azure' ? (theme) => (theme.palette.mode === 'dark' ? 'rgba(0, 180, 216, 0.16)' : '#ffffff') : 'transparent',
+                  color: activeTab === 'azure' ? '#00b4d8' : 'text.secondary',
+                  border: activeTab === 'azure' ? '1px solid rgba(0, 180, 216, 0.3)' : '1px solid transparent',
+                  boxShadow: activeTab === 'azure' ? '0 2px 8px rgba(0, 180, 216, 0.15)' : 'none',
+                  textTransform: 'none',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                safbsdev (Nefuza)
+              </Button>
+              <Button
+                onClick={() => setActiveTab('uncurl')}
+                size="small"
+                fullWidth
+                startIcon={<BusinessIcon sx={{ fontSize: 17, color: activeTab === 'uncurl' ? '#356854' : 'inherit' }} />}
+                sx={{
+                  borderRadius: 2,
+                  py: 0.7,
+                  fontSize: '0.78rem',
+                  fontWeight: activeTab === 'uncurl' ? 750 : 550,
+                  bgcolor: activeTab === 'uncurl' ? (theme) => (theme.palette.mode === 'dark' ? 'rgba(53, 104, 84, 0.28)' : '#ffffff') : 'transparent',
+                  color: activeTab === 'uncurl' ? '#356854' : 'text.secondary',
+                  border: activeTab === 'uncurl' ? '1px solid rgba(53, 104, 84, 0.35)' : '1px solid transparent',
+                  boxShadow: activeTab === 'uncurl' ? '0 2px 8px rgba(53, 104, 84, 0.15)' : 'none',
+                  textTransform: 'none',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                uncurl:health Board
+              </Button>
             </Box>
 
             {error && (
@@ -306,66 +394,191 @@ export const ConnectionForm: React.FC = () => {
               </Alert>
             )}
 
-            <form onSubmit={handleSubmit}>
+            {activeTab === 'azure' ? (
+              <>
+                <form onSubmit={handleSubmit}>
+                  <Stack spacing={1.8}>
+                    <TextField
+                      label="Organization Name"
+                      placeholder="e.g. my-company"
+                      value={organization}
+                      onChange={(e) => setOrganization(e.target.value)}
+                      required
+                      fullWidth
+                      size="small"
+                      variant="outlined"
+                      disabled={loading}
+                      slotProps={{
+                        input: {
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <CheckCircleOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                            </InputAdornment>
+                          ),
+                        },
+                      }}
+                    />
+
+                    <TextField
+                      label="Project Name"
+                      placeholder="e.g. mobile-app"
+                      value={project}
+                      onChange={(e) => setProject(e.target.value)}
+                      required
+                      fullWidth
+                      size="small"
+                      variant="outlined"
+                      disabled={loading}
+                    />
+
+                    <TextField
+                      label="Personal Access Token (PAT)"
+                      placeholder="Paste your Azure PAT"
+                      type={showPat ? 'text' : 'password'}
+                      value={pat}
+                      onChange={(e) => setPat(e.target.value)}
+                      required
+                      fullWidth
+                      size="small"
+                      variant="outlined"
+                      disabled={loading}
+                      slotProps={{
+                        input: {
+                          endAdornment: (
+                            <InputAdornment position="end">
+                              <Tooltip title="Tokens require Work Items (Read) scope">
+                                <HelpOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary', mr: 0.5, cursor: 'pointer' }} />
+                              </Tooltip>
+                              <IconButton
+                                onClick={() => setShowPat(!showPat)}
+                                edge="end"
+                                aria-label="toggle PAT visibility"
+                                size="small"
+                              >
+                                {showPat ? <VisibilityOff sx={{ fontSize: 18 }} /> : <Visibility sx={{ fontSize: 18 }} />}
+                              </IconButton>
+                            </InputAdornment>
+                          ),
+                        },
+                      }}
+                    />
+
+                    <Button
+                      type="submit"
+                      variant="contained"
+                      fullWidth
+                      size="medium"
+                      disabled={loading}
+                      startIcon={loading ? <CircularProgress size={18} color="inherit" /> : <LockOutlinedIcon sx={{ fontSize: 18 }} />}
+                      sx={{ py: 1.1, fontSize: '0.9rem', borderRadius: 2, fontWeight: 650 }}
+                    >
+                      {loading ? 'Validating Credentials...' : 'Connect to Azure DevOps'}
+                    </Button>
+                  </Stack>
+                </form>
+
+                <Divider sx={{ my: 1.8 }}>
+                  <Chip
+                    label="OR"
+                    size="small"
+                    sx={{ fontSize: '0.7rem', fontWeight: 700, height: 20, bgcolor: 'action.hover' }}
+                  />
+                </Divider>
+
+                <Stack spacing={1.2}>
+                  {/* Direct 1-Click Access to uncurl:health without PAT */}
+                  <Button
+                    variant="contained"
+                    fullWidth
+                    size="small"
+                    onClick={() => handleUncurlLogin()}
+                    startIcon={<FlashOnIcon sx={{ color: '#6ee7b7', fontSize: 19 }} />}
+                    sx={{
+                      py: 1.05,
+                      borderRadius: 2,
+                      fontWeight: 700,
+                      fontSize: '0.84rem',
+                      textTransform: 'none',
+                      bgcolor: '#356854',
+                      color: '#ffffff',
+                      boxShadow: '0 4px 14px rgba(53, 104, 84, 0.3)',
+                      '&:hover': {
+                        bgcolor: '#285040',
+                        boxShadow: '0 6px 18px rgba(53, 104, 84, 0.45)',
+                      },
+                    }}
+                  >
+                    Direct Login to uncurl:health (No PAT Required)
+                  </Button>
+
+                  <Button
+                    variant="outlined"
+                    color="secondary"
+                    fullWidth
+                    size="small"
+                    onClick={handleDemoMode}
+                    startIcon={<RocketLaunchIcon sx={{ fontSize: 18 }} />}
+                    sx={{ py: 0.9, borderRadius: 2, fontWeight: 650, fontSize: '0.82rem' }}
+                  >
+                    Explore Demo Sandbox (Sample Data)
+                  </Button>
+                </Stack>
+              </>
+            ) : (
+              /* uncurl:health Dedicated Direct View */
               <Stack spacing={1.8}>
-                <TextField
-                  label="Organization Name"
-                  placeholder="e.g. my-company"
-                  value={organization}
-                  onChange={(e) => setOrganization(e.target.value)}
-                  required
-                  fullWidth
-                  size="small"
+                <Paper
                   variant="outlined"
-                  disabled={loading}
-                  slotProps={{
-                    input: {
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <CheckCircleOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
-                        </InputAdornment>
-                      ),
-                    },
+                  sx={{
+                    p: 1.6,
+                    borderRadius: 2,
+                    bgcolor: 'rgba(53, 104, 84, 0.07)',
+                    border: '1px solid rgba(53, 104, 84, 0.25)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 0.6,
                   }}
-                />
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#356854' }}>
+                      uncurl:health Board
+                    </Typography>
+                    <Chip
+                      label="No Azure PAT Required"
+                      size="small"
+                      sx={{ bgcolor: '#356854', color: '#fff', fontWeight: 700, fontSize: '0.68rem', height: 20 }}
+                    />
+                  </Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.74rem', lineHeight: 1.35 }}>
+                    Access Tasquee & Supabase board tasks directly. Azure DevOps credentials and PAT are not needed for this board.
+                  </Typography>
+                </Paper>
 
                 <TextField
-                  label="Project Name"
-                  placeholder="e.g. mobile-app"
-                  value={project}
-                  onChange={(e) => setProject(e.target.value)}
-                  required
+                  label="Bearer Authorization Token"
+                  placeholder="Paste Bearer token (optional if already saved)"
+                  type={showUncurlToken ? 'text' : 'password'}
+                  value={uncurlToken}
+                  onChange={(e) => setUncurlToken(e.target.value)}
                   fullWidth
                   size="small"
                   variant="outlined"
-                  disabled={loading}
-                />
-
-                <TextField
-                  label="Personal Access Token (PAT)"
-                  placeholder="Paste your Azure PAT"
-                  type={showPat ? 'text' : 'password'}
-                  value={pat}
-                  onChange={(e) => setPat(e.target.value)}
-                  required
-                  fullWidth
-                  size="small"
-                  variant="outlined"
-                  disabled={loading}
+                  helperText={
+                    uncurlToken
+                      ? '✓ Bearer token detected for Supabase card authorization'
+                      : 'Optional: Enter user token if required by Supabase RLS policies'
+                  }
                   slotProps={{
                     input: {
                       endAdornment: (
                         <InputAdornment position="end">
-                          <Tooltip title="Tokens require Work Items (Read) scope">
-                            <HelpOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary', mr: 0.5, cursor: 'pointer' }} />
-                          </Tooltip>
                           <IconButton
-                            onClick={() => setShowPat(!showPat)}
+                            onClick={() => setShowUncurlToken(!showUncurlToken)}
                             edge="end"
-                            aria-label="toggle PAT visibility"
+                            aria-label="toggle token visibility"
                             size="small"
                           >
-                            {showPat ? <VisibilityOff sx={{ fontSize: 18 }} /> : <Visibility sx={{ fontSize: 18 }} />}
+                            {showUncurlToken ? <VisibilityOff sx={{ fontSize: 18 }} /> : <Visibility sx={{ fontSize: 18 }} />}
                           </IconButton>
                         </InputAdornment>
                       ),
@@ -374,40 +587,51 @@ export const ConnectionForm: React.FC = () => {
                 />
 
                 <Button
-                  type="submit"
                   variant="contained"
                   fullWidth
                   size="medium"
-                  disabled={loading}
-                  startIcon={loading ? <CircularProgress size={18} color="inherit" /> : <LockOutlinedIcon sx={{ fontSize: 18 }} />}
-                  sx={{ py: 1.1, fontSize: '0.9rem', borderRadius: 2, fontWeight: 650 }}
+                  onClick={() => handleUncurlLogin()}
+                  startIcon={<FlashOnIcon sx={{ color: '#6ee7b7' }} />}
+                  sx={{
+                    py: 1.1,
+                    fontSize: '0.9rem',
+                    borderRadius: 2,
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    bgcolor: '#356854',
+                    color: '#ffffff',
+                    boxShadow: '0 4px 14px rgba(53, 104, 84, 0.35)',
+                    '&:hover': {
+                      bgcolor: '#285040',
+                      boxShadow: '0 6px 18px rgba(53, 104, 84, 0.45)',
+                    },
+                  }}
                 >
-                  {loading ? 'Validating Credentials...' : 'Connect to Azure DevOps'}
+                  Open uncurl:health Board
                 </Button>
+
+                <Divider sx={{ my: 1.2 }}>
+                  <Chip
+                    label="OR"
+                    size="small"
+                    sx={{ fontSize: '0.7rem', fontWeight: 700, height: 20, bgcolor: 'action.hover' }}
+                  />
+                </Divider>
+
+                <Stack spacing={1.2}>
+                  <Button
+                    variant="outlined"
+                    fullWidth
+                    size="small"
+                    onClick={() => setActiveTab('azure')}
+                    startIcon={<CloudQueueIcon sx={{ fontSize: 18 }} />}
+                    sx={{ py: 0.9, borderRadius: 2, fontWeight: 650, fontSize: '0.82rem', textTransform: 'none' }}
+                  >
+                    Switch to Azure DevOps (safbsdev)
+                  </Button>
+                </Stack>
               </Stack>
-            </form>
-
-            <Divider sx={{ my: 1.8 }}>
-              <Chip
-                label="OR"
-                size="small"
-                sx={{ fontSize: '0.7rem', fontWeight: 700, height: 20, bgcolor: 'action.hover' }}
-              />
-            </Divider>
-
-            <Stack spacing={1.2}>
-              <Button
-                variant="outlined"
-                color="secondary"
-                fullWidth
-                size="small"
-                onClick={handleDemoMode}
-                startIcon={<RocketLaunchIcon sx={{ fontSize: 18 }} />}
-                sx={{ py: 1, borderRadius: 2, fontWeight: 650, fontSize: '0.85rem' }}
-              >
-                Explore Demo Sandbox (Sample Data)
-              </Button>
-            </Stack>
+            )}
 
             <Box
               sx={{

@@ -44,11 +44,21 @@ const initialSession = loadSession();
 const initialUncurlSession = loadUncurlSession();
 const initialActiveOrg: OrgType = (localStorage.getItem(ACTIVE_ORG_KEY) as OrgType) || 'safbsdev';
 
+const isExplicitlyDisconnected = (() => {
+  try {
+    return sessionStorage.getItem('sg_session_disconnected') === 'true';
+  } catch {
+    return false;
+  }
+})();
+
 const initialState: ConnectionState = {
   config: initialSession,
   uncurlConfig: initialUncurlSession,
   activeOrg: initialActiveOrg,
-  isConnected: !!initialSession || (initialActiveOrg === 'uncurl:health' && !!initialUncurlSession),
+  isConnected: !isExplicitlyDisconnected && (
+    !!initialSession || (initialActiveOrg === 'uncurl:health' && !!initialUncurlSession)
+  ),
   themeMode: (localStorage.getItem('theme_mode') as 'light' | 'dark') || 'light',
   selectedWorkItem: null,
   drawerOpen: false,
@@ -63,6 +73,7 @@ export const connectionSlice = createSlice({
       state.activeOrg = 'safbsdev';
       state.isConnected = true;
       try {
+        sessionStorage.removeItem('sg_session_disconnected');
         localStorage.setItem(AZURE_STORAGE_KEY, JSON.stringify(action.payload));
         sessionStorage.setItem(AZURE_STORAGE_KEY, JSON.stringify(action.payload));
         localStorage.setItem(ACTIVE_ORG_KEY, 'safbsdev');
@@ -75,6 +86,7 @@ export const connectionSlice = createSlice({
       state.activeOrg = 'uncurl:health';
       state.isConnected = true;
       try {
+        sessionStorage.removeItem('sg_session_disconnected');
         localStorage.setItem(UNCURL_STORAGE_KEY, JSON.stringify(action.payload));
         sessionStorage.setItem(UNCURL_STORAGE_KEY, JSON.stringify(action.payload));
         localStorage.setItem(ACTIVE_ORG_KEY, 'uncurl:health');
@@ -97,6 +109,11 @@ export const connectionSlice = createSlice({
       state.isConnected = false;
       state.selectedWorkItem = null;
       state.drawerOpen = false;
+      try {
+        sessionStorage.setItem('sg_session_disconnected', 'true');
+      } catch (e) {
+        console.error(e);
+      }
     },
     toggleThemeMode: (state) => {
       const nextMode = state.themeMode === 'light' ? 'dark' : 'light';
