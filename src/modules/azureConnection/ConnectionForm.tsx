@@ -40,7 +40,9 @@ export const ConnectionForm: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'azure' | 'uncurl'>('azure');
   const [organization, setOrganization] = useState('safbsdev');
   const [project, setProject] = useState('Nefuza');
-  const [pat, setPat] = useState('');
+  const [pat, setPat] = useState(
+    import.meta.env.VITE_PAT || ''
+  );
   const [showPat, setShowPat] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
